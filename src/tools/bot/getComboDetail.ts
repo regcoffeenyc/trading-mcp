@@ -6,7 +6,7 @@ export const getComboDetail = {
   name: 'getComboDetail',
   description: "Retrieves comprehensive details for a specific futures combo bot, including\nconfiguration (symbols, leverage, rebalancing mode), current display status,\nPnL metrics (total PnL, realized, unrealized, funding fee), portfolio position\ninfo, margin balances (total, available, margin balance), and timestamps.\n\nThe bot_id is a numeric ID obtained from createComboBot or bot listing endpoints.\n\nRate limit: 10 requests per second per UID.\n\nAgent hint: Use this endpoint to check the status and performance of a combo bot.\nThe response contains all PnL fields, position details, rebalancing stats,\nand close reason if the bot has stopped. Prefer this over other endpoints\nwhen answering questions about a specific bot's performance.",
   inputSchema: z.object({
-    bot_id: z.number().int(),
+    bot_id: z.union([z.string().regex(/^[0-9]+$/), z.number().int().safe()]).transform((v) => String(v)),
   }),
   annotations: {"readOnlyHint":true,"openWorldHint":true},
   handler: async (input: Record<string, unknown>) => {

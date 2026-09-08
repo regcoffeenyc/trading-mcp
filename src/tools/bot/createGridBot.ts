@@ -11,7 +11,7 @@ export const createGridBot = {
     min_price: z.string(),
     total_investment: z.string(),
     cell_number: z.number().int().min(2),
-    followed_grid_id: z.number().int().default(0).optional(),
+    followed_grid_id: z.union([z.string().regex(/^[0-9]+$/), z.number().int().safe()]).transform((v) => String(v)).default(0).optional(),
     source: z.enum(["1", "2"]).optional(),
     entry_price: z.string().optional(),
     stop_loss_price: z.string().optional(),
