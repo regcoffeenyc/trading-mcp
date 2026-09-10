@@ -1,6 +1,7 @@
 import { BybitRest } from './bybit/rest.js';
 import { createStrategy } from './strategy/index.js';
 import { RiskManager } from './risk.js';
+import { loadEnvFile } from './env.js';
 import { loadConfig, type Config } from './config.js';
 import { configureLogger, log } from './logger.js';
 import { emptyState } from './state.js';
@@ -300,6 +301,7 @@ export function formatResult(r: BacktestResult, cfg: Config): string {
 // ------------------------------------------------------------------ CLI entry
 
 async function main(): Promise<void> {
+  loadEnvFile(process.env.ENV_FILE ?? '.env');
   const cfg = loadConfig();
   configureLogger({ level: cfg.logLevel });
   const bars = Number(process.env.BACKTEST_BARS ?? 5000);

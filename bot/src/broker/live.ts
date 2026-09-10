@@ -11,6 +11,20 @@ interface TrackedPosition {
 }
 
 /**
+ * A position that vanished from the exchange but whose realised P&L has not
+ * appeared in the closed-P&L ledger yet.
+ */
+interface PendingClosure {
+  tracked: TrackedPosition;
+  symbol: string;
+  detectedAt: number;
+  attempts: number;
+}
+
+/** How many polls to wait for the ledger before booking the trade regardless. */
+const MAX_LEDGER_ATTEMPTS = 8;
+
+/**
  * Places real orders on Bybit.
  *
  * Stops and targets are attached to the order itself, so they live on Bybit's
@@ -21,7 +35,7 @@ export class LiveBroker implements Broker {
   readonly kind = 'live' as const;
   private readonly instruments = new Map<string, Instrument>();
   private tracked = new Map<string, TrackedPosition>();
-  private lastClosureScan = Date.now();
+  private readonly pending = new Map<string, PendingClosure>();
 
   constructor(private readonly rest: BybitRest) {}
 
@@ -101,32 +115,57 @@ export class LiveBroker implements Broker {
    * Detects closures by diffing tracked positions against the exchange, then
    * reads realised P&L from Bybit's closed-P&L ledger so fees and funding are
    * included exactly as the exchange booked them.
+   *
+   * The ledger lags the position disappearing by a moment, so a closure is held
+   * back until its entry appears rather than being booked as a zero — recording
+   * a stop-out as break-even would corrupt the losing-streak counter and the
+   * day's realised P&L.
    */
   async pollClosures(): Promise<ClosedTrade[]> {
     const live = await this.positions();
     const liveBySymbol = new Map(live.map((p) => [p.symbol, p]));
-    const closed: ClosedTrade[] = [];
 
+    // Anything tracked but no longer on the exchange has closed.
     for (const [symbol, tracked] of this.tracked) {
       if (liveBySymbol.has(symbol)) continue;
-      const ledger = await this.rest.closedPnl(this.lastClosureScan - 60_000).catch((err) => {
+      this.tracked.delete(symbol);
+      if (!this.pending.has(symbol)) {
+        this.pending.set(symbol, { tracked, symbol, detectedAt: Date.now(), attempts: 0 });
+      }
+    }
+
+    const closed: ClosedTrade[] = [];
+    if (this.pending.size > 0) {
+      const earliest = Math.min(...[...this.pending.values()].map((p) => p.detectedAt));
+      const ledger = await this.rest.closedPnl(earliest - 5 * 60_000).catch((err) => {
         log.warn('Could not read closed P&L', { error: String(err) });
         return [];
       });
-      const entry = ledger.find((e) => e.symbol === symbol);
-      const pnl = entry?.closedPnl ?? 0;
-      closed.push({
-        symbol,
-        side: tracked.side,
-        qty: tracked.qty,
-        entryPrice: tracked.entryPrice,
-        exitPrice: entry ? tracked.entryPrice + pnl / tracked.qty * (tracked.side === 'Buy' ? 1 : -1) : tracked.entryPrice,
-        pnl,
-        openedAt: tracked.openedAt,
-        closedAt: entry?.updatedTime ?? Date.now(),
-        reason: pnl >= 0 ? 'target/exit' : 'stop/exit',
-      });
-      this.tracked.delete(symbol);
+
+      for (const entry of [...this.pending.values()]) {
+        entry.attempts += 1;
+        const booked = ledger
+          .filter((e) => e.symbol === entry.symbol && e.updatedTime >= entry.detectedAt - 5 * 60_000)
+          .sort((a, b) => b.updatedTime - a.updatedTime)[0];
+
+        if (!booked) {
+          if (entry.attempts < MAX_LEDGER_ATTEMPTS) continue;
+          // Give up waiting. Equity-based guards still hold the daily limit, but
+          // the streak counter needs a verdict, so treat an unknown as a loss.
+          log.warn('Closed P&L never appeared; booking the trade as unknown', {
+            symbol: entry.symbol, attempts: entry.attempts,
+          });
+          this.pending.delete(entry.symbol);
+          closed.push(this.toClosedTrade(entry.tracked, entry.symbol, 0, Date.now(), 'closed-unknown-pnl'));
+          continue;
+        }
+
+        this.pending.delete(entry.symbol);
+        closed.push(this.toClosedTrade(
+          entry.tracked, entry.symbol, booked.closedPnl, booked.updatedTime,
+          booked.closedPnl >= 0 ? 'target/exit' : 'stop/exit',
+        ));
+      }
     }
 
     // Keep sizes current — a partial fill or partial close changes them.
@@ -136,8 +175,26 @@ export class LiveBroker implements Broker {
       else this.tracked.set(pos.symbol, { side: pos.side, qty: pos.size, entryPrice: pos.entryPrice, openedAt: pos.createdTime });
     }
 
-    this.lastClosureScan = Date.now();
     return closed;
+  }
+
+  private toClosedTrade(
+    tracked: TrackedPosition, symbol: string, pnl: number, closedAt: number, reason: string,
+  ): ClosedTrade {
+    const dir = tracked.side === 'Buy' ? 1 : -1;
+    // Back out the effective exit price from realised P&L, for the trade log.
+    const exitPrice = tracked.qty > 0 ? tracked.entryPrice + (pnl / tracked.qty) * dir : tracked.entryPrice;
+    return {
+      symbol,
+      side: tracked.side,
+      qty: tracked.qty,
+      entryPrice: tracked.entryPrice,
+      exitPrice,
+      pnl,
+      openedAt: tracked.openedAt,
+      closedAt,
+      reason,
+    };
   }
 
   onCandle(_symbol: string, _candle: Candle): void { /* live fills come from the exchange */ }

@@ -107,6 +107,46 @@ test('a closed position is detected and its realised P&L read from the ledger', 
   assert.deepEqual(await broker.pollClosures(), [], 'a closure is reported exactly once');
 });
 
+test('a closure waits for the ledger rather than booking a stop-out as break-even', async () => {
+  mock.positions = [];
+  mock.orders.length = 0;
+  mock.closedPnl = [];
+  const broker = new LiveBroker(rest);
+  await broker.init(['BTCUSDT'], 5);
+  await broker.open({ symbol: 'BTCUSDT', side: 'Buy', qty: '0.010', stopLoss: '98.00', takeProfit: '104.00' });
+
+  // The exchange shows the position gone, but the P&L ledger has not caught up.
+  mock.positions = [];
+  assert.deepEqual(await broker.pollClosures(), [], 'must not book a trade with no ledger entry');
+  assert.deepEqual(await broker.pollClosures(), [], 'still waiting on the ledger');
+
+  // The ledger catches up with the real loss.
+  mock.closedPnl = [{
+    symbol: 'BTCUSDT', side: 'Buy', closedPnl: '-1.47', updatedTime: String(Date.now()), orderId: 'x',
+  }];
+  const closures = await broker.pollClosures();
+  assert.equal(closures.length, 1);
+  assert.equal(closures[0]!.pnl, -1.47, 'the real loss must be recorded, not zero');
+  assert.equal(closures[0]!.reason, 'stop/exit');
+});
+
+test('a closure is eventually booked even if the ledger never reports it', async () => {
+  mock.positions = [];
+  mock.orders.length = 0;
+  mock.closedPnl = [];
+  const broker = new LiveBroker(rest);
+  await broker.init(['BTCUSDT'], 5);
+  await broker.open({ symbol: 'BTCUSDT', side: 'Buy', qty: '0.010', stopLoss: '98.00', takeProfit: '104.00' });
+  mock.positions = [];
+
+  let closures: Awaited<ReturnType<typeof broker.pollClosures>> = [];
+  for (let i = 0; i < 12 && closures.length === 0; i++) {
+    closures = await broker.pollClosures();
+  }
+  assert.equal(closures.length, 1, 'the bot must not track a phantom position forever');
+  assert.equal(closures[0]!.reason, 'closed-unknown-pnl');
+});
+
 test('an existing position is adopted on restart instead of being duplicated', async () => {
   mock.closedPnl = [];
   mock.positions = [{

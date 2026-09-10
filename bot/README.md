@@ -82,15 +82,33 @@ balance.
 cd bot
 npm install
 npm run build
-npm test                    # 36 tests, no network needed
-
-cp .env.example .env        # then edit it
+npm test                    # 46 tests, no network needed
+npm run setup               # finds your Api note, writes .env
 ```
+
+`npm run setup` looks for a note called `Api` on your Desktop (including
+OneDrive Desktop), reads the API key and secret out of it, and writes a `.env`
+with safe defaults — `MODE=paper`, so no real orders are sent. It prints only a
+redacted form of your credentials, never the secret itself. If the note lives
+elsewhere:
+
+```bash
+API_NOTE_PATH="C:\Users\you\Desktop\Api.txt" npm run setup
+```
+
+The note can be in any of these shapes:
+
+```
+API Key: xxxxxxxxxxxxxxxxxx
+API Secret: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+Then, in order:
 
 ### 1. See what the strategy actually did historically
 
 ```bash
-BACKTEST_BARS=5000 npm run backtest
+npm run backtest
 ```
 
 Prints trades, win rate, profit factor, expectancy in R, max drawdown, fees
@@ -112,34 +130,22 @@ risk budget. The doctor tells you which symbols are viable on $50.
 ### 3. Paper trade
 
 ```bash
-MODE=paper NETWORK=mainnet npm start
+npm start
 ```
 
-Real market data, simulated fills, no orders sent, no keys needed. Leave it
-running for at least two weeks.
+Real market data, simulated fills, no orders sent. Leave it running for at
+least two weeks and compare the result against the backtest.
 
 ### 4. Testnet
 
-Create testnet keys at <https://testnet.bybit.com>, then:
-
-```bash
-MODE=live NETWORK=testnet npm start
-```
-
-This exercises the real order path — signing, fills, stop placement, closure
-detection — with worthless coins.
+Create testnet keys at <https://testnet.bybit.com>, put them in `.env`, then set
+`MODE=live` and `NETWORK=testnet`. This exercises the real order path — signing,
+fills, stop placement, closure detection — with worthless coins.
 
 ### 5. Live
 
-Only after the previous steps look right:
-
-```bash
-MODE=live NETWORK=mainnet npm start
-```
-
-The bot prints a warning and waits 10 seconds before starting.
-
----
+Only after the previous steps look right, set `MODE=live` and
+`NETWORK=mainnet`. The bot prints a warning and waits 10 seconds before starting.
 
 ## API key setup
 
@@ -187,14 +193,34 @@ sized within your risk budget. Prefer liquid, lower-priced perps.
 
 ## Running 24/7
 
-**Docker (recommended):**
+### Windows
+
+```powershell
+# from the bot folder, in an elevated PowerShell
+powershell -ExecutionPolicy Bypass -File deploy\windows\install-task.ps1
+Start-ScheduledTask -TaskName BybitBot
+```
+
+This registers a Scheduled Task that starts at logon and restarts the bot if it
+ever exits. **Disable sleep**, or the bot stops managing positions whenever the
+machine sleeps:
+
+```powershell
+powercfg /change standby-timeout-ac 0
+powercfg /change hibernate-timeout-ac 0
+```
+
+Check on it with `Get-ScheduledTask -TaskName BybitBot | Get-ScheduledTaskInfo`,
+or open <http://localhost:8080/health>.
+
+### Docker (any OS)
 
 ```bash
 docker compose up -d --build
 docker compose logs -f
 ```
 
-**systemd:**
+### Linux systemd
 
 ```bash
 sudo useradd -r -s /usr/sbin/nologin bot
@@ -205,18 +231,20 @@ sudo systemctl daemon-reload && sudo systemctl enable --now bybit-bot
 journalctl -u bybit-bot -f
 ```
 
-Both restart automatically on crash and on host reboot.
+### A desktop PC is not really a 24/7 host
+
+It sleeps, reboots for updates, and loses its network. While the bot is offline
+it cannot move stops to breakeven, honour the max-hold timeout, or open new
+trades — though open positions keep the stop and target that were attached to
+them on Bybit, which is the whole reason they are placed there.
+
+For genuine 24/7, run it on a $5/month VPS. The Docker or systemd instructions
+above are all you need on one.
 
 **Monitoring.** `GET /health` on `HEALTH_PORT` returns equity, daily P&L, open
 positions and halt state — and **503 once halted**, so any uptime monitor can
 alert you. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` for push alerts on
 every entry, exit and halt.
-
-Host it somewhere that does not sleep — a $5/month VPS. A laptop is not a 24/7
-host, and a bot that is offline when its stop should move is a bot with an
-unmanaged position.
-
----
 
 ## How the risk stops interact
 
@@ -240,6 +268,8 @@ so the bot cannot open a position that would breach the limit if it loses.
 ```
 src/
   index.ts          entry point, signal handling, graceful shutdown
+  setup.ts          first-run setup: reads the Api note, writes .env
+  env.ts            .env loading, with real env vars taking precedence
   engine.ts         control loop: bar clock for decisions, 15s clock for risk
   config.ts         env parsing plus refuse-to-start validation
   risk.ts           sizing and every rule that can stop a trade
@@ -259,11 +289,13 @@ src/
 npm run build && npm test
 ```
 
-36 tests, no network required. They cover order-step rounding (where a rounding
+46 tests, no network required. They cover order-step rounding (where a rounding
 bug means a rejected order or an oversized position), indicator correctness,
-every risk gate, config validation, the backtest loop, HMAC request signing
-verified against an independent checker, kline ordering and pagination, and the
-live broker's order/closure/adoption paths against a mock Bybit.
+every risk gate, config validation, the backtest loop, credential parsing, HMAC
+request signing verified against an independent checker, kline ordering and
+pagination, and the live broker's order, closure-detection and position-adoption
+paths against a mock Bybit — including that a lagging P&L ledger never books a
+stop-out as break-even.
 
 ## Extending it
 

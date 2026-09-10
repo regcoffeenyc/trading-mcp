@@ -1,9 +1,11 @@
 import { Engine } from './engine.js';
+import { loadEnvFile } from './env.js';
 import { loadConfig, riskWarnings } from './config.js';
 import { configureLogger, log } from './logger.js';
 import { usd } from './util.js';
 
 async function main(): Promise<void> {
+  loadEnvFile(process.env.ENV_FILE ?? '.env');
   const cfg = loadConfig();
   configureLogger({ level: cfg.logLevel, file: cfg.logFile });
 

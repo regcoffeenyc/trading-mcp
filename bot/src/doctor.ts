@@ -1,4 +1,5 @@
 import { BybitRest } from './bybit/rest.js';
+import { loadEnvFile } from './env.js';
 import { loadConfig, riskWarnings } from './config.js';
 import { configureLogger } from './logger.js';
 import { RiskManager } from './risk.js';
@@ -10,6 +11,7 @@ import { usd } from './util.js';
  * all before a single order is sent.
  */
 async function main(): Promise<void> {
+  loadEnvFile(process.env.ENV_FILE ?? '.env');
   const cfg = loadConfig();
   configureLogger({ level: 'info' });
   const rest = new BybitRest({
