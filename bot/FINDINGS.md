@@ -63,6 +63,40 @@ At 3% risk per trade and 85 trades a year, that is roughly **65% a year before
 compounding** — about **$2.69 a month on $50**, and **$250/month at around
 $5,000** of capital.
 
+## Walk-forward: the edge survives out-of-sample
+
+Everything above chose its parameters by looking at the whole history, which is
+how backtests flatter themselves. The proper test is to choose on one slice and
+measure on another the choice never saw.
+
+Parameters were selected on the **first 60%** of each symbol's 12H history, then
+evaluated on the **last 40%**:
+
+| | Out-of-sample expectancy | Trades |
+|---|---|---|
+| All 32 grid points (baseline) | +0.081 R | 2,603 |
+| Config chosen on in-sample only (`trend` 1.8/4) | **+0.402 R** | 119 |
+| Shipped config (`trend` 2.5/3) | **+0.438 R** | 110 |
+
+Three things pass at once:
+
+1. **No decay.** The chosen configuration scored +0.324 R in-sample and +0.402 R
+   out-of-sample. Overfitting produces the opposite — a strong in-sample number
+   that collapses on unseen data.
+2. **The selection carried information.** +0.402 R against a grid-wide baseline
+   of +0.081 R. Choosing on the first 60% genuinely predicted what worked in the
+   last 40%, rather than picking a lucky cell.
+3. **The whole space is positive.** The baseline itself — every parameter
+   combination averaged, good and bad — is +0.081 R over 2,603 trades. The
+   result does not depend on finding one magic setting.
+
+Every one of the top eight in-sample configurations was `trend`; mean-reversion
+did not place, consistent with it flipping sign across timeframes earlier.
+
+This is about as much validation as a backtest can give. It does not remove the
+survivorship caveat below, and it cannot model outages, funding costs, or a
+regime the data never contained.
+
 ### Read that with four caveats
 
 1. **Survivorship bias, and it is the big one.** These are the 30 perpetuals that
@@ -124,9 +158,11 @@ Two honest paths from here:
    as well as statistically: five symbols would produce about 14 trades a year,
    far too few to learn anything from a paper run, while thirty produce roughly
    seven a month.
-2. **Correct for survivorship before believing the number.** Re-running this
-   over a universe that includes delisted perpetuals would give an honest
-   expectancy. Until that is done, treat +0.253 R as an optimistic ceiling.
+2. **Correct for survivorship before believing the number.** This is now the
+   single largest open question, since the walk-forward test has ruled out
+   overfitting as an explanation. Re-running over a universe that includes
+   delisted perpetuals would give an honest expectancy. Until that is done,
+   treat the measured figures as an optimistic ceiling.
 
 What would move the needle on the $250/month target is capital, not parameters.
 The strategy's measured rate is around 5%/month at best and probably less; the
