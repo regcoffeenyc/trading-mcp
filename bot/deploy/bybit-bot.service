@@ -1,0 +1,37 @@
+# Install:
+#   sudo cp deploy/bybit-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now bybit-bot
+# Logs:
+#   journalctl -u bybit-bot -f
+
+[Unit]
+Description=Bybit trading bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bot
+WorkingDirectory=/opt/bybit-bot
+EnvironmentFile=/opt/bybit-bot/.env
+ExecStart=/usr/bin/node dist/index.js
+
+# Always come back, and don't give up after a burst of restarts.
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=0
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bybit-bot
+
+# Hardening: the process needs the network and its own data dir, nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/bybit-bot/data
+
+[Install]
+WantedBy=multi-user.target

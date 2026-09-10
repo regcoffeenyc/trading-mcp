@@ -1,0 +1,16 @@
+services:
+  bot:
+    build: .
+    container_name: bybit-bot
+    env_file: .env
+    # Survives crashes, host reboots and OOM kills — the point of 24/7.
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

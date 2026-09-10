@@ -1,0 +1,21 @@
+{
+  "name": "bybit-scalp-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "24/7 risk-managed trading bot for Bybit V5 USDT perpetuals",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test dist/*.test.js",
+    "start": "node dist/index.js",
+    "dev": "node --env-file=.env dist/index.js",
+    "backtest": "node dist/backtest.js",
+    "doctor": "node dist/doctor.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.3"
+  }
+}
