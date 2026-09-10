@@ -13,8 +13,6 @@ import { floorToStep, roundToStep, sleep, tradingDayKey, usd } from './util.js';
 import type { Config } from './config.js';
 import type { Candle, Position } from './bybit/types.js';
 
-const TICK_MS = 15_000;
-
 /**
  * The bot's control loop.
  *
@@ -76,6 +74,24 @@ export class Engine {
       historyBars: strategyWindow(this.strategy.warmupBars),
     });
     this.state = emptyState(tradingDayKey(Date.now(), cfg.dayResetHourUtc), cfg.startingEquity);
+  }
+
+  /**
+   * Test seam: drives one closed bar through the engine as if the stream had
+   * delivered it, and resolves once the engine has finished handling it.
+   * Production code never calls this — the stream does.
+   */
+  async injectBar(symbol: string, candles: Candle[]): Promise<void> {
+    this.stream.replaceBuffer(symbol, candles);
+    const last = candles[candles.length - 1];
+    if (!last) return;
+    this.broker.onCandle?.(symbol, last);
+    await this.runExclusive(`Bar ${symbol}`, () => this.onBar(symbol));
+  }
+
+  /** Test seam: runs one risk tick immediately instead of waiting for the timer. */
+  async runTick(): Promise<void> {
+    await this.runExclusive('Risk tick', () => this.tick());
   }
 
   async start(): Promise<void> {
@@ -149,7 +165,7 @@ export class Engine {
   private async tickLoop(): Promise<void> {
     while (this.running) {
       await this.runExclusive('Risk tick', () => this.tick());
-      await sleep(TICK_MS);
+      await sleep(this.cfg.tickMs);
     }
   }
 

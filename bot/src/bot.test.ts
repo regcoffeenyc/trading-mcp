@@ -29,7 +29,7 @@ function baseConfig(overrides: Partial<Config> = {}): Config {
     stopAtrMult: 1.8, takeProfitR: 2, breakevenAtR: 1, trailAtrMult: 0,
     maxSpreadPct: 0.06, minAtrPct: 0.15, maxHoldMinutes: 720,
     takerFeeRate: 0.00055, slippagePct: 0.02,
-    stateFile: './data/test.json', logLevel: 'error', healthPort: 0,
+    tickMs: 15_000, stateFile: './data/test.json', logLevel: 'error', healthPort: 0,
     ...overrides,
   };
 }

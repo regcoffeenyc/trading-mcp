@@ -82,7 +82,7 @@ balance.
 cd bot
 npm install
 npm run build
-npm test                    # 46 tests, no network needed
+npm test                    # 49 tests, no network needed
 npm run setup               # finds your Api note, writes .env
 ```
 
@@ -296,7 +296,8 @@ src/
   strategy/         trend and mean-reversion signal generators
   broker/           live and paper execution behind one interface
   bybit/            V5 REST client and auto-reconnecting kline stream
-  testing/          mock Bybit server used by the integration tests
+  testing/          mock Bybit and a replay exchange used by the tests
+  data/             OKX historical candles, used when Bybit REST is blocked
 ```
 
 ## Tests
@@ -305,13 +306,20 @@ src/
 npm run build && npm test
 ```
 
-46 tests, no network required. They cover order-step rounding (where a rounding
+49 tests, no network required. They cover order-step rounding (where a rounding
 bug means a rejected order or an oversized position), indicator correctness,
 every risk gate, config validation, the backtest loop, credential parsing, HMAC
 request signing verified against an independent checker, kline ordering and
 pagination, and the live broker's order, closure-detection and position-adoption
 paths against a mock Bybit — including that a lagging P&L ledger never books a
 stop-out as break-even.
+
+Three of them are end-to-end: the real engine is driven over a real historical
+candle series against an exchange stand-in that honours stops and targets the
+way Bybit does. They assert that a complete trade cycle runs, that every entry
+carries its stop and target to the exchange, that the risk on each fill lands
+within the configured budget, and that every close is booked into persistent
+state with P&L matching the exchange ledger.
 
 ## Extending it
 

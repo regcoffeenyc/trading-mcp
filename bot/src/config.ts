@@ -43,6 +43,8 @@ export interface Config {
   takerFeeRate: number;
   slippagePct: number;
 
+  /** Risk-tick interval in ms. Lowered in tests; leave at the default in production. */
+  tickMs: number;
   stateFile: string;
   logLevel: LogLevel;
   logFile?: string;
@@ -124,6 +126,7 @@ export function loadConfig(): Config {
     takerFeeRate: num('TAKER_FEE_RATE', 0.00055),
     slippagePct: num('SLIPPAGE_PCT', 0.02),
 
+    tickMs: num('TICK_MS', 15_000),
     stateFile: process.env.STATE_FILE ?? './data/state.json',
     logLevel: oneOf('LOG_LEVEL', ['debug', 'info', 'warn', 'error'] as const, 'info'),
     logFile: process.env.LOG_FILE || undefined,
@@ -155,6 +158,7 @@ export function validate(cfg: Config): void {
   if (cfg.stopAtrMult <= 0) errors.push('STOP_ATR_MULT must be positive.');
   if (cfg.takeProfitR <= 0) errors.push('TAKE_PROFIT_R must be positive.');
   if (cfg.dayResetHourUtc < 0 || cfg.dayResetHourUtc > 23) errors.push('DAY_RESET_HOUR_UTC must be 0-23.');
+  if (cfg.tickMs < 100 || cfg.tickMs > 300_000) errors.push('TICK_MS must be between 100 and 300000.');
 
   const riskUsd = (cfg.startingEquity * cfg.riskPerTradePct) / 100;
   if (riskUsd > cfg.maxDailyLossUsd) {

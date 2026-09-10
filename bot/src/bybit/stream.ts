@@ -56,6 +56,14 @@ export class KlineStream extends EventEmitter {
     return this.candles(symbol).filter((c) => c.closed);
   }
 
+  /**
+   * Replaces a symbol's buffer wholesale. Used by replay tests to drive the
+   * engine from a fixed candle series without a live socket.
+   */
+  replaceBuffer(symbol: string, candles: Candle[]): void {
+    this.buffers.set(symbol, candles);
+  }
+
   /** True once every symbol holds enough history for the strategy to act. */
   isWarm(minBars: number): boolean {
     return this.opts.symbols.every((s) => this.closedCandles(s).length >= minBars);
