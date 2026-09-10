@@ -10,41 +10,43 @@ Zero runtime dependencies — Node 22's built-in `fetch` and `WebSocket` only.
 
 ## Read this before you start
 
-You asked for a bot that turns **$50 into $250 profit per month**. That is
-**+500% per month**, and it is not a target any bot can be built to hit. Here is
-the arithmetic, so the decision is yours rather than mine:
+**The strategy that ships with this bot has no demonstrated edge on Bybit. Do
+not fund it.**
 
-**1. Compounding makes the number absurd.** 500% a month sustained for a year is
-6¹² ≈ 2.2 billion×. A $50 account would become roughly $100 billion. Nobody in
-the history of markets has compounded at that rate; the best funds in the world
+Verified 2026-09-10 against Bybit's own candles, 314 trades across 28 symbols:
+expectancy **+0.012 R per trade, t = 0.37, 95% CI −0.052 to +0.077 R**. That is
+statistically indistinguishable from zero. An earlier run on OKX data suggested
++0.253 R; it did not replicate, most likely because that symbol universe was
+built from coins that still trade today and so quietly selected for winners.
+Full detail in [FINDINGS.md](FINDINGS.md).
+
+The machinery works — installation, credentials, sizing, risk gates and the
+exchange connection all verify clean. What is missing is a signal worth trading.
+Treat this as a tested harness to develop a strategy in, not as something to put
+money behind today.
+
+### On the original goal of $250/month from $50
+
+That is +500% a month, and no bot can be built to hit it. Two reasons, separate
+from the edge question:
+
+**Compounding makes the number absurd.** 500% a month for a year is 6¹² ≈ 2.2
+billion×, turning $50 into roughly $100 billion. The best funds in the world
 target 2–3% *per month*.
 
-**2. Fees are the binding constraint at $50.** Bybit's taker fee is 0.055% per
-side, 0.11% per round trip. With a 3% risk budget ($1.50) and a typical 1.5%
-stop distance, each trade carries about $100 of notional, so a round trip costs
-about **$0.11**. A strategy with a genuinely good +0.2R expectancy earns $0.30
-per trade — so fees take roughly **a third of the edge** before slippage. Trade
-more often to "make it up" and the fees scale while the edge does not.
+**Fees bind hardest at $50.** Bybit's taker fee is 0.055% per side. With a 3%
+risk budget ($1.50) and a typical 1.5% stop distance, each trade carries about
+$100 of notional, so a round trip costs about $0.11. Even a genuinely good
++0.2R strategy would earn $0.30 a trade — so fees take a third of the edge
+before slippage.
 
-**3. Your daily stop is 30% of the account.** Losing $15 on $50 three days
-running leaves about $16. The bot enforces the $15 limit exactly as you asked,
-but it defaults `EQUITY_FLOOR_USD=20` so the account cannot be ground to zero
-before you notice.
+A systematic strategy that actually works returns on the order of 3–10% a month
+with 20–40% drawdowns and losing months. On $50 that is $1.50–$5.00 a month;
+$250 a month needs roughly $2,500–$8,000 in capital. The return rate is the
+constraint, not the software.
 
-**What is actually achievable.** A systematic strategy that genuinely works on
-crypto perps returns on the order of **3–10% a month** with 20–40% drawdowns,
-and many months are negative. On $50 that is **$1.50–$5.00 a month**. To earn
-$250 a month at those rates you need roughly **$2,500–$8,000 in capital** — the
-return rate is the constraint, not the bot.
-
-**So use the $50 as tuition, not as an engine.** Run it on paper, then testnet,
-then live at $50 with these limits. If it is profitable across a few hundred
-trades, the strategy is worth funding properly. If it is not — and most are not
-— you learned that for $50 instead of $5,000.
-
-No part of this is investment advice, and nothing here is a promise of profit.
-Crypto perpetual futures are leveraged instruments; you can lose your entire
-balance.
+Nothing here is investment advice or a promise of profit. Crypto perpetual
+futures are leveraged; you can lose your entire balance.
 
 ---
 

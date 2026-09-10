@@ -1,5 +1,12 @@
 # Backtest findings
 
+> **VERIFIED ON BYBIT 2026-09-10 — THE EDGE DID NOT REPLICATE.**
+> Re-running the headline test against Bybit's own candles on the operator's
+> machine gives **+0.012 R per trade over 314 trades (t = 0.37, 95% CI −0.052
+> to +0.077 R)** — statistically indistinguishable from zero. The OKX-derived
+> +0.253 R below did not survive contact with the exchange the bot actually
+> trades on. See "Bybit verification" at the end. **Do not fund this strategy.**
+
 Measured 2026-09-10 over OKX candles for the same USDT perpetuals Bybit lists
 (Bybit's REST API was geo-blocked from the machine that ran this). Prices track
 Bybit within a few basis points, Bybit's 0.055% taker fee and a $5 minimum order
@@ -237,3 +244,69 @@ interval symbol    strategy stop  tp   days trades win%   PF     expR    maxDD% 
    15m BTCUSDT   trend     1.8    2   154     54  33.3   0.53 -0.365    50.7 -11.7
    15m DOGEUSDT  trend     1.8    2   154     62  35.5   0.43 -0.412    60.8 -16.4
 ```
+
+
+---
+
+# Bybit verification (2026-09-10)
+
+Everything above was measured on OKX candles because Bybit's REST API was
+geo-blocked from the machine that ran it. This section re-runs the headline
+configuration on **Bybit's own data**, on the operator's Windows machine, using
+the shipped settings (12H trend, $50 equity, 3% risk, $15 daily stop, 0.055%
+taker fee, 0.02% slippage) over 3,000 bars per symbol — 2022-11-16 to
+2026-09-10.
+
+## The result
+
+| Metric | OKX (earlier) | **Bybit (verified)** |
+|---|---|---|
+| Trades | 316 | **314** |
+| Expectancy | +0.253 R | **+0.012 R** |
+| Symbols positive | 19 / 30 | **12 / 28** |
+| t statistic vs zero | not computed | **0.372** |
+| 95% confidence interval | — | **−0.052 to +0.077 R** |
+
+Standard deviation of R was 0.582, giving a standard error of 0.033. A t of
+0.37 is nowhere near the 1.96 needed for significance: the true expectancy
+could just as easily be negative as positive.
+
+12 of 28 symbols positive is 43% — a coin flip. The per-symbol spread runs from
++0.429 R (BTCUSDT, on 3 trades) to −0.154 R (BNBUSDT, 15 trades), which is
+exactly the dispersion you get from noise around zero.
+
+## What this means
+
+The edge reported above was an artefact of the OKX dataset. The most likely
+cause is the one already flagged as the largest open doubt: **survivorship
+bias**. The symbol universe was assembled from coins that still trade today,
+which quietly selects for assets that trended up over the sample.
+
+Consequences, stated plainly:
+
+1. **The strategy has no demonstrated edge on Bybit.** Not a small edge — an
+   edge indistinguishable from zero, before any of the live-trading costs a
+   backtest cannot model (outages, funding, slippage beyond the 0.02% assumed).
+2. **Funding it would be gambling with extra steps.** At +0.012 R on a $1.50
+   risk budget, the expected return is $0.018 per trade, or roughly four-tenths
+   of a cent a day across the whole 30-symbol universe. That number is noise.
+3. **The bot itself is not the problem.** Installation, credentials, order
+   sizing, risk gates and the exchange connection all verified clean on the
+   operator's machine. What is missing is a signal worth trading.
+
+## What would have to change first
+
+A strategy worth funding needs a t statistic above 2 on out-of-sample data from
+the exchange it will trade on — not a promising backtest on a different venue.
+Concretely, before any money goes in:
+
+- Build the symbol universe from what was listed *at the start* of the sample,
+  not what survives today, so survivorship bias is removed rather than assumed
+  away.
+- Find an effect large enough to clear costs at a size the account can express.
+  Bybit's $5 minimum order against a $1.50 risk budget is a real constraint at
+  $50.
+- Re-verify on Bybit data, out-of-sample, and require significance.
+
+Until then the honest position is that this is a working bot with nothing
+profitable to run.
