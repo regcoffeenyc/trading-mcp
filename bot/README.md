@@ -134,12 +134,20 @@ risk budget. The doctor tells you which symbols are viable on $50.
 
 ### 3. Paper trade
 
+A ready-made profile for this is in `.env.paper.example` — the least-bad
+configuration from the sweep (mean-reversion, 1H, DOGE and SOL), with the same
+risk limits that would apply live so the rehearsal is fair:
+
 ```bash
+cp .env.paper.example .env   # then add your API keys
 npm start
 ```
 
 Real market data, simulated fills, no orders sent. Leave it running for at
-least two weeks and compare the result against the backtest.
+least two weeks, then compare against the backtest. **The purpose is not to
+make money** — it is to find out whether the backtest's numbers survive contact
+with live data. If paper comes in far worse, the backtest was flattering the
+strategy, and you learned that for free.
 
 ### 4. Testnet
 
