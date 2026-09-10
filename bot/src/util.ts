@@ -93,7 +93,7 @@ export async function retry<T>(
 export function isTransient(err: unknown): boolean {
   if (err instanceof RetryableError) return true;
   const msg = err instanceof Error ? err.message : String(err);
-  return /timeout|ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN|socket hang up|fetch failed|HTTP 5\d\d|HTTP 429|retCode 10016|retCode 10006|retCode 10002/i.test(msg);
+  return /timeout|ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN|socket hang up|fetch failed|HTTP 5\d\d|HTTP 429|rate limited|retCode 10016|retCode 10006|retCode 10002/i.test(msg);
 }
 
 /** UTC-day key (YYYY-MM-DD) shifted by `resetHourUtc`, used to bucket daily P&L. */

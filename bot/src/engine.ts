@@ -3,7 +3,7 @@ import { KlineStream } from './bybit/stream.js';
 import { LiveBroker } from './broker/live.js';
 import { PaperBroker } from './broker/paper.js';
 import type { Broker } from './broker/types.js';
-import { createStrategy, type Strategy } from './strategy/index.js';
+import { createStrategy, strategyWindow, type Strategy } from './strategy/index.js';
 import { RiskManager } from './risk.js';
 import { StateStore, emptyState, rollDay, type BotState } from './state.js';
 import { Notifier } from './notify.js';
@@ -72,7 +72,8 @@ export class Engine {
       symbols: cfg.symbols,
       interval: cfg.interval,
       rest: this.rest,
-      historyBars: Math.max(300, this.strategy.warmupBars + 50),
+      // Same window the backtest uses, so live and simulated signals match.
+      historyBars: strategyWindow(this.strategy.warmupBars),
     });
     this.state = emptyState(tradingDayKey(Date.now(), cfg.dayResetHourUtc), cfg.startingEquity);
   }

@@ -11,3 +11,4 @@ export function createStrategy(name: StrategyName): Strategy {
 }
 
 export type { Signal, Strategy, StrategyContext } from './types.js';
+export { strategyWindow } from './types.js';

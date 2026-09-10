@@ -12,7 +12,7 @@ const WS_HOSTS: Record<Network, string> = {
 
 const PING_INTERVAL_MS = 20_000;
 const STALE_AFTER_MS = 90_000;
-const MAX_BUFFER = 500;
+const MAX_BUFFER = 1000;
 
 export interface KlineStreamOptions {
   network: Network;
@@ -54,6 +54,11 @@ export class KlineStream extends EventEmitter {
   /** Latest closed candles only — what a strategy is allowed to see. */
   closedCandles(symbol: string): Candle[] {
     return this.candles(symbol).filter((c) => c.closed);
+  }
+
+  /** True once every symbol holds enough history for the strategy to act. */
+  isWarm(minBars: number): boolean {
+    return this.opts.symbols.every((s) => this.closedCandles(s).length >= minBars);
   }
 
   async start(): Promise<void> {

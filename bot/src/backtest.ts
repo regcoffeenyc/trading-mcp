@@ -1,6 +1,6 @@
 import { BybitRest } from './bybit/rest.js';
 import { fetchOkxHistory } from './data/okx.js';
-import { createStrategy } from './strategy/index.js';
+import { createStrategy, strategyWindow } from './strategy/index.js';
 import { RiskManager } from './risk.js';
 import { loadEnvFile } from './env.js';
 import { loadConfig, type Config } from './config.js';
@@ -75,8 +75,12 @@ export type DataSource = 'bybit' | 'okx';
  */
 const BYBIT_LINEAR_DEFAULTS: Omit<Instrument, 'symbol'> = {
   tickSize: '0.0001',
-  qtyStep: '0.1',
-  minOrderQty: '0.1',
+  // Deliberately fine, so lot granularity does not become a fake constraint and
+  // silently exclude a symbol. On a $50 account the constraint that actually
+  // binds is Bybit's $5 minimum order value, which is uniform across its linear
+  // perpetuals and is modelled exactly.
+  qtyStep: '0.000001',
+  minOrderQty: '0.000001',
   maxOrderQty: '1000000',
   minNotionalValue: 5,
   maxLeverage: 25,
@@ -103,6 +107,7 @@ export async function runBacktest(
 export function simulate(cfg: Config, symbol: string, candles: Candle[], instrument: Instrument): BacktestResult {
   const strategy = createStrategy(cfg.strategy);
   const risk = new RiskManager(cfg);
+  const window = strategyWindow(strategy.warmupBars);
 
   let equity = cfg.startingEquity;
   let peak = equity;
@@ -221,7 +226,8 @@ export function simulate(cfg: Config, symbol: string, candles: Candle[], instrum
 
     const signal = strategy.evaluate({
       symbol,
-      candles: candles.slice(0, i + 1),
+      // Exactly the history the live bot would hold at this bar.
+      candles: candles.slice(Math.max(0, i + 1 - window), i + 1),
       stopAtrMult: cfg.stopAtrMult,
       takeProfitR: cfg.takeProfitR,
       minAtrPct: cfg.minAtrPct,
