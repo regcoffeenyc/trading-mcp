@@ -107,6 +107,11 @@ Then, in order:
 
 ### 1. See what the strategy actually did historically
 
+**Already done once — read [FINDINGS.md](FINDINGS.md) first.** A 60-configuration
+sweep over ~2,900 trades found 4 profitable and a mean expectancy of −0.134 R.
+Neither shipped strategy has a demonstrated edge, and the recommendation is not
+to fund it until one does. Re-run it yourself against Bybit:
+
 ```bash
 npm run backtest
 ```
@@ -171,7 +176,7 @@ The ones that decide whether the account survives:
 | `MODE` | `paper` | `paper` simulates fills; `live` sends real orders |
 | `NETWORK` | `testnet` | `mainnet`, `testnet` or `demo` |
 | `SYMBOLS` | `SOLUSDT,XRPUSDT,DOGEUSDT` | Lower-priced symbols size better on a small account |
-| `INTERVAL` | `15` | Minutes per candle. Below 15m, fees dominate |
+| `INTERVAL` | `60` | Minutes per candle. Every 15m config backtested negative |
 | `RISK_PER_TRADE_PCT` | `3` | Percent of equity risked per trade |
 | `MAX_DAILY_LOSS_USD` | `15` | Hard daily stop, mark-to-market |
 | `EQUITY_FLOOR_USD` | `20` | Permanent halt below this equity |

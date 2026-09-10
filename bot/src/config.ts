@@ -97,7 +97,8 @@ export function loadConfig(): Config {
       .split(',')
       .map((s) => s.trim().toUpperCase())
       .filter(Boolean),
-    interval: process.env.INTERVAL ?? '15',
+    // 60m by default: every 15m configuration backtested negative (FINDINGS.md).
+    interval: process.env.INTERVAL ?? '60',
     strategy: oneOf('STRATEGY', ['trend', 'meanrev'] as const, 'trend'),
     leverage: num('LEVERAGE', 5),
 
