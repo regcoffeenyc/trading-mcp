@@ -1,7 +1,9 @@
 node_modules/
 dist/
-data/
+# Runtime state and logs only — anchored, or it would also swallow src/data/.
+/data/
 .env
 .env.*
 !.env.example
+!.env.paper.example
 *.log
