@@ -234,7 +234,16 @@ powershell -ExecutionPolicy Bypass -File deploy\windows\bootstrap.ps1
 That installs, builds, runs the tests, writes `.env` from your credentials note
 and runs the pre-flight check. It does not start trading and sends no orders.
 
-To keep it running:
+To keep it running, without administrator rights:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\windows\install-startup.ps1
+```
+
+That installs a launcher in your Startup folder which runs the bot at logon and
+restarts it if it exits. To undo it, add `-Uninstall`.
+
+If you *do* have administrator rights, a Scheduled Task is tidier:
 
 ```powershell
 # elevated PowerShell
