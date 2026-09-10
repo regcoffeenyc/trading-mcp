@@ -40,21 +40,44 @@ matters. Median drawdown falls the same way, from 48% at 15m to 8.8% at 1D.
 side of it. A result that flips sign as a parameter moves, with no mechanism to
 explain it, is noise.
 
-## The catch: frequency collapses
+## Frequency is the lever, and it scales with the universe
 
-Positive expectancy did not become large returns, because long timeframes trade
-rarely. Daily trend produced about 7 trades per configuration over six years —
-roughly 1.3 trades per symbol per year. The best monthly rates in the whole
-sweep were +0.2% to +1.2%.
+Positive expectancy did not become a return on five symbols, because long
+timeframes trade rarely — roughly one entry per symbol per quarter. So the
+obvious question is whether trading more symbols multiplies the trades without
+diluting the edge. Tested on 30 established perpetuals listed on both Bybit and
+OKX, 12H trend-following, 2.5 ATR stop and 3R target, 316 trades over ~3.7 years:
 
-On $50, +0.5%/month is **25 cents a month**. Trading 30 symbols instead of 5
-might reach ~2.8%/month, which is **$1.40 a month** on $50.
+| | |
+|---|---|
+| Symbols with positive expectancy | **19 / 30** |
+| Trade-weighted expectancy | **+0.253 R** |
+| Trades | 316 (~10.5 per symbol) |
+| Portfolio rate | ~85 trades/year |
 
-So the honest read is: there may be a small real edge in slow trend-following,
-and it is **capital-limited, not parameter-limited**. At the rates measured
-here, $250/month needs something on the order of **$10,000-$50,000**, not $50.
-No amount of tuning closes that gap; only capital does, and only if the edge is
-real out-of-sample.
+The per-trade edge held while the trade count nearly doubled (+0.253 R across 30
+symbols against +0.214 R across five). That is what a real edge looks like when
+you widen the sample, and the opposite of what overfitting looks like.
+
+At 3% risk per trade and 85 trades a year, that is roughly **65% a year before
+compounding** — about **$2.69 a month on $50**, and **$250/month at around
+$5,000** of capital.
+
+### Read that with four caveats
+
+1. **Survivorship bias, and it is the big one.** These are the 30 perpetuals that
+   exist today with years of history. Coins that were delisted or collapsed are
+   not in the sample, and a trend system would have taken losses in them.
+   Expect the live figure to be materially below +0.253 R.
+2. **The sample is still modest.** 316 trades sounds like a lot until you split
+   it 30 ways: ~10 trades per symbol. Individual symbol rows mean little.
+3. **Position slots cap the return.** 85 trades a year holding several days each
+   needs more concurrent capacity than the config allows; with a small number of
+   slots you will simply miss signals, and the realised return falls below the
+   arithmetic above.
+4. **Crypto is correlated.** Several open positions is not diversification when
+   everything sells off together. More slots means more risk in exactly the
+   moment it hurts.
 
 ## What the data does say
 
@@ -80,27 +103,34 @@ returns.
 
 ## Recommendation
 
-**Do not fund this yet** — but the reason has changed. The original sweep found
-nothing but a fee-driven bleed. Slow trend-following does look positive, and
-consistently so. What it does not do is produce meaningful money on $50: the
-expectancy is real but the frequency is low, so the returns are cents per month.
-Funding $50 would not lose much; it would simply not achieve anything, while
-tying up the account in trades that last days.
+**Do not fund $50 yet** — the reason has changed twice, so here is where it
+landed. The first sweep found a fee-driven bleed. Extending the timeframe found
+a positive, consistent edge in slow trend-following. Widening the universe found
+that the edge survives and the frequency scales.
+
+What has not changed is that $50 is the wrong amount. At ~65%/year before
+survivorship bias, $50 returns a few dollars a month, and the exchange's $5
+minimum order means a 3% risk budget ($1.50) cannot always be expressed at all.
+The account is too small for the strategy to run properly, never mind hit $250.
+
+The number that matters: **$250/month needs roughly $5,000**, and only if the
+edge survives out-of-sample. Prove that on paper first.
 
 Two honest paths from here:
 
-1. **Paper-trade the best-supported configuration** — `trend` on 12H across
-   several symbols — and compare live results against the backtest. This is what
-   `.env.paper.example` now sets up.
-2. **Widen the universe.** The 12H trend edge is real-looking but rare — about
-   one entry per symbol per quarter. Running 20-30 liquid perpetuals instead of
-   five multiplies the number of trades without changing the per-trade edge,
-   which is the only honest way to turn a small expectancy into a return.
-   The infrastructure already supports it: add symbols to `SYMBOLS`.
+1. **Paper-trade the best-supported configuration** — `trend` on 12H across the
+   30-symbol universe — and compare live results against the backtest. This is
+   what `.env.paper.example` now sets up. The wide universe matters practically
+   as well as statistically: five symbols would produce about 14 trades a year,
+   far too few to learn anything from a paper run, while thirty produce roughly
+   seven a month.
+2. **Correct for survivorship before believing the number.** Re-running this
+   over a universe that includes delisted perpetuals would give an honest
+   expectancy. Until that is done, treat +0.253 R as an optimistic ceiling.
 
 What would move the needle on the $250/month target is capital, not parameters.
-Nothing in this sweep reached even 3%/month, and the configurations that were
-reliably positive returned well under 1%.
+The strategy's measured rate is around 5%/month at best and probably less; the
+gap to $250 on $50 is a capital gap, and tuning cannot close it.
 
 ## Raw sweep: 15m and 1H
 
