@@ -107,10 +107,11 @@ Then, in order:
 
 ### 1. See what the strategy actually did historically
 
-**Already done once — read [FINDINGS.md](FINDINGS.md) first.** A 60-configuration
-sweep over ~2,900 trades found 4 profitable and a mean expectancy of −0.134 R.
-Neither shipped strategy has a demonstrated edge, and the recommendation is not
-to fund it until one does. Re-run it yourself against Bybit:
+**Already done — read [FINDINGS.md](FINDINGS.md) first.** ~2,450 trades across
+five timeframes found that the timeframe decides the sign: expectancy is −0.14 R
+at 15m and +0.12 R at 1D, improving monotonically for trend-following. The
+returns are still small in absolute terms, and the recommendation is not to fund
+$50 into it. Re-run it yourself against Bybit:
 
 ```bash
 npm run backtest
@@ -134,8 +135,8 @@ risk budget. The doctor tells you which symbols are viable on $50.
 
 ### 3. Paper trade
 
-A ready-made profile for this is in `.env.paper.example` — the least-bad
-configuration from the sweep (mean-reversion, 1H, DOGE and SOL), with the same
+A ready-made profile for this is in `.env.paper.example` — the best-supported
+configuration from the sweep (trend-following, 12H, five symbols), with the same
 risk limits that would apply live so the rehearsal is fair:
 
 ```bash
@@ -184,7 +185,7 @@ The ones that decide whether the account survives:
 | `MODE` | `paper` | `paper` simulates fills; `live` sends real orders |
 | `NETWORK` | `testnet` | `mainnet`, `testnet` or `demo` |
 | `SYMBOLS` | `SOLUSDT,XRPUSDT,DOGEUSDT` | Lower-priced symbols size better on a small account |
-| `INTERVAL` | `60` | Minutes per candle. Every 15m config backtested negative |
+| `INTERVAL` | `720` | Minutes per candle. Expectancy is negative below 4H |
 | `RISK_PER_TRADE_PCT` | `3` | Percent of equity risked per trade |
 | `MAX_DAILY_LOSS_USD` | `15` | Hard daily stop, mark-to-market |
 | `EQUITY_FLOOR_USD` | `20` | Permanent halt below this equity |

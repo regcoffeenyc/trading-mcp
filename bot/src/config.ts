@@ -106,8 +106,9 @@ export function loadConfig(): Config {
       .split(',')
       .map((s) => s.trim().toUpperCase())
       .filter(Boolean),
-    // 60m by default: every 15m configuration backtested negative (FINDINGS.md).
-    interval: process.env.INTERVAL ?? '60',
+    // 12H by default. Expectancy is negative at 15m and 1H and positive from 4H
+    // upward, monotonically for trend-following — see FINDINGS.md.
+    interval: process.env.INTERVAL ?? '720',
     strategy: oneOf('STRATEGY', ['trend', 'meanrev'] as const, 'trend'),
     leverage: num('LEVERAGE', 5),
 

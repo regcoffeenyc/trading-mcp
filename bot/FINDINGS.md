@@ -9,40 +9,69 @@ risk per trade, $15 daily loss stop, $20 equity floor.
 **Re-run this on your own machine against Bybit before acting on it**
 (`BACKTEST_SOURCE=bybit npm run backtest`).
 
-## Result
+## Headline: the timeframe decides the sign
 
-60 configurations — 5 symbols × 2 strategies × 2 timeframes × 3 stop/target
-pairs — over roughly 2,900 trades. 15m runs cover 154 days, 1H runs 616 days.
+Roughly 2,450 trades across 5 symbols, both strategies, five timeframes and two
+stop/target pairs. Grouping by timeframe rather than reading any single cell,
+because with ~100 configurations the best cell is noise:
 
-| | |
-|---|---|
-| Configurations profitable | **4 of 60** |
-| Trade-weighted mean expectancy | **−0.134 R** |
-| Best configuration | DOGEUSDT meanrev 1H, +2.1%/month (24 trades) |
-| Best 15m configuration | SOLUSDT trend, −0.9%/month |
+| Timeframe | Configs profitable | Expectancy | Trades |
+|---|---|---|---|
+| 15m | 2 / 20 | **−0.142 R** | 865 |
+| 1H | 6 / 20 | −0.086 R | 950 |
+| 4H | 9 / 20 | **+0.071 R** | 242 |
+| 12H | 10 / 20 | **+0.051 R** | 275 |
+| 1D | 8 / 18 | **+0.124 R** | 122 |
 
-**Neither shipped strategy has a demonstrated edge.** The four profitable
-configurations are what you would expect to find by chance when testing 60 of
-them, and the best one rests on 24 trades over 20 months.
+Split by strategy, one of the two holds up and the other does not:
 
-On $50, that best-case +2.1%/month is **$1.05 a month** — against a $250/month
-goal. Even taking the cherry-picked number at face value, the gap is ~240×.
+| Strategy | 15m | 1H | 4H | 12H | 1D |
+|---|---|---|---|---|---|
+| **trend** | −0.105 | −0.082 | +0.063 | **+0.214** | **+0.343** |
+| **meanrev** | −0.229 | −0.095 | +0.086 | −0.212 | −0.251 |
+
+**Trend-following improves monotonically across all five timeframes.** That is
+not a cherry-picked cell; it is a consistent gradient with a mechanism behind
+it — a round trip costs 0.11% of notional no matter how long the trade lasts,
+so the longer the hold and the larger the move captured, the less the fee
+matters. Median drawdown falls the same way, from 48% at 15m to 8.8% at 1D.
+
+**Mean-reversion does not hold up.** It is positive at 4H and negative either
+side of it. A result that flips sign as a parameter moves, with no mechanism to
+explain it, is noise.
+
+## The catch: frequency collapses
+
+Positive expectancy did not become large returns, because long timeframes trade
+rarely. Daily trend produced about 7 trades per configuration over six years —
+roughly 1.3 trades per symbol per year. The best monthly rates in the whole
+sweep were +0.2% to +1.2%.
+
+On $50, +0.5%/month is **25 cents a month**. Trading 30 symbols instead of 5
+might reach ~2.8%/month, which is **$1.40 a month** on $50.
+
+So the honest read is: there may be a small real edge in slow trend-following,
+and it is **capital-limited, not parameter-limited**. At the rates measured
+here, $250/month needs something on the order of **$10,000-$50,000**, not $50.
+No amount of tuning closes that gap; only capital does, and only if the edge is
+real out-of-sample.
 
 ## What the data does say
 
-**1. The hourly timeframe beats 15 minutes, decisively.** Every 15m
-configuration lost money. This is the fee-drag argument made concrete: a round
-trip costs 0.11% of notional regardless of how far price moves, so shorter bars
-pay the same toll for a smaller move. The shipped default is now `INTERVAL=60`.
+**1. Short timeframes are where the money goes.** Every 15m configuration lost
+money, and 1H barely improved on it. The shipped default is now `INTERVAL=720`
+(12H) with `STRATEGY=trend`, which is where expectancy is both positive and
+supported by a reasonable number of trades.
 
-**2. Drawdowns are severe.** Many configurations show 40–60% peak-to-trough on a
-$50 account. Two breached the $20 equity floor and halted — the kill switch
-worked, but the account was down 60% by then.
+**2. Drawdowns shrink as the timeframe lengthens.** Median peak-to-trough falls
+from 48% at 15m to 8.8% at 1D. Several short-timeframe configurations breached
+the $20 equity floor and halted — the kill switch worked, but the account was
+down 60% by the time it fired.
 
-**3. Tighter targets beat wider ones.** Across the board, `TAKE_PROFIT_R=2`
-outperformed 3 and 4. Trend-following theory says let winners run; on these
-symbols and this horizon, the wider targets were simply not reached often
-enough to pay for the extra losers.
+**3. Target width depends on the timeframe.** At 15m and 1H, `TAKE_PROFIT_R=2`
+beat 3 and 4 — the wider targets were not reached often enough to pay for the
+extra losers. At 4H and above the ordering reverses and `2.5/3` tends to win,
+which is what trend-following theory predicts once fees stop dominating.
 
 **4. Moving to breakeven at 1R is roughly neutral.** It slightly improves win
 rate and slightly reduces expectancy — it converts small winners into scratches
@@ -51,28 +80,33 @@ returns.
 
 ## Recommendation
 
-**Do not fund this yet.** A negative-expectancy system loses money faster with
-more capital, not less. Funding $50 into a system measured at −0.134 R per trade
-is buying a slow, fee-driven bleed.
+**Do not fund this yet** — but the reason has changed. The original sweep found
+nothing but a fee-driven bleed. Slow trend-following does look positive, and
+consistently so. What it does not do is produce meaningful money on $50: the
+expectancy is real but the frequency is low, so the returns are cents per month.
+Funding $50 would not lose much; it would simply not achieve anything, while
+tying up the account in trades that last days.
 
 Two honest paths from here:
 
-1. **Paper-trade the least-bad configuration** (`meanrev`, 1H, DOGE/SOL) for a
-   month and compare live results against the backtest. If they diverge sharply,
-   the backtest is wrong; if they match, the answer is already known.
-2. **Find an actual edge first.** The infrastructure — risk limits, sizing,
-   exchange-side stops, reconnection, state persistence — is sound and reusable.
-   The signal generator is the part that does not work. Testing a new strategy is
-   now a matter of implementing one interface and running one command.
+1. **Paper-trade the best-supported configuration** — `trend` on 12H across
+   several symbols — and compare live results against the backtest. This is what
+   `.env.paper.example` now sets up.
+2. **Widen the universe.** The 12H trend edge is real-looking but rare — about
+   one entry per symbol per quarter. Running 20-30 liquid perpetuals instead of
+   five multiplies the number of trades without changing the per-trade edge,
+   which is the only honest way to turn a small expectancy into a return.
+   The infrastructure already supports it: add symbols to `SYMBOLS`.
 
 What would move the needle on the $250/month target is capital, not parameters.
-At a *genuinely good* 5%/month, $250 requires $5,000. No configuration in this
-sweep reached 5%/month even before accounting for the selection bias.
+Nothing in this sweep reached even 3%/month, and the configurations that were
+reliably positive returned well under 1%.
 
-## Raw sweep
+## Raw sweep: 15m and 1H
 
-Ranked by compounded monthly return. `expR` is expectancy in R (risk units) per
-trade — the number that decides whether a system makes money over time.
+The original short-timeframe sweep, kept because it is the evidence for the
+central claim that fees dominate at these speeds. Ranked by compounded monthly
+return; `expR` is expectancy in R (risk units) per trade.
 
 ```
 interval symbol    strategy stop  tp   days trades win%   PF     expR    maxDD%  monthly%
