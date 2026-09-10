@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { log } from '../logger.js';
-import type { BybitRest, Network } from './rest.js';
+import type { Network } from './rest.js';
+import type { MarketData } from '../data/types.js';
 import type { Candle } from './types.js';
 
 const WS_HOSTS: Record<Network, string> = {
@@ -18,9 +19,16 @@ export interface KlineStreamOptions {
   network: Network;
   symbols: string[];
   interval: string;
-  rest: BybitRest;
+  rest: MarketData;
   /** Candles kept per symbol; must exceed the longest indicator lookback. */
   historyBars?: number;
+  /**
+   * 'ws' subscribes to Bybit's push feed. 'poll' re-reads candles on a timer,
+   * for a provider with no socket — slower to notice a close, but a bot on 1H
+   * bars does not care about a few seconds.
+   */
+  mode?: 'ws' | 'poll';
+  pollMs?: number;
 }
 
 /**
@@ -42,9 +50,11 @@ export class KlineStream extends EventEmitter {
   private reconnectAttempts = 0;
   private stopped = false;
 
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+
   constructor(opts: KlineStreamOptions) {
     super();
-    this.opts = { historyBars: 300, ...opts };
+    this.opts = { historyBars: 300, mode: 'ws', pollMs: 20_000, ...opts };
   }
 
   candles(symbol: string): Candle[] {
@@ -71,6 +81,11 @@ export class KlineStream extends EventEmitter {
 
   async start(): Promise<void> {
     await this.seed();
+    if (this.opts.mode === 'poll') {
+      this.pollTimer = setInterval(() => void this.poll(), this.opts.pollMs);
+      log.info('Market data polling started', { symbols: this.opts.symbols.length, everyMs: this.opts.pollMs });
+      return;
+    }
     this.connect();
     this.watchdog = setInterval(() => this.checkStale(), 30_000);
   }
@@ -79,6 +94,7 @@ export class KlineStream extends EventEmitter {
     this.stopped = true;
     if (this.pingTimer) clearInterval(this.pingTimer);
     if (this.watchdog) clearInterval(this.watchdog);
+    if (this.pollTimer) clearInterval(this.pollTimer);
     try { this.ws?.close(); } catch { /* already closing */ }
     this.ws = null;
   }
@@ -88,6 +104,37 @@ export class KlineStream extends EventEmitter {
       const candles = await this.opts.rest.klines(symbol, this.opts.interval, this.opts.historyBars);
       this.buffers.set(symbol, candles);
       log.debug('Seeded candles', { symbol, bars: candles.length });
+    }
+  }
+
+  /**
+   * Poll mode: re-reads recent candles and emits any bar that has closed since
+   * the last look. Idempotent — a bar is only emitted once, however often the
+   * poll runs.
+   */
+  private async poll(): Promise<void> {
+    if (this.stopped) return;
+    for (const symbol of this.opts.symbols) {
+      try {
+        const fresh = await this.opts.rest.klines(symbol, this.opts.interval, 20);
+        const buffer = this.buffers.get(symbol);
+        if (!buffer) continue;
+        for (const candle of fresh) {
+          const existing = buffer.findIndex((c) => c.time === candle.time);
+          if (existing >= 0) {
+            const previouslyClosed = buffer[existing]!.closed;
+            buffer[existing] = candle;
+            if (candle.closed && !previouslyClosed) this.emit('bar', symbol, candle);
+          } else if (candle.time > (buffer[buffer.length - 1]?.time ?? 0)) {
+            buffer.push(candle);
+            if (buffer.length > MAX_BUFFER) buffer.shift();
+            if (candle.closed) this.emit('bar', symbol, candle);
+          }
+        }
+        this.lastMessageAt = Date.now();
+      } catch (err) {
+        log.warn('Candle poll failed', { symbol, error: String(err) });
+      }
     }
   }
 

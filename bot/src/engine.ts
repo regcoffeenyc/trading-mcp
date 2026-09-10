@@ -1,4 +1,6 @@
 import { BybitRest } from './bybit/rest.js';
+import { OkxMarketData } from './data/okx.js';
+import type { MarketData } from './data/types.js';
 import { KlineStream } from './bybit/stream.js';
 import { LiveBroker } from './broker/live.js';
 import { PaperBroker } from './broker/paper.js';
@@ -25,6 +27,7 @@ import type { Candle, Position } from './bybit/types.js';
  */
 export class Engine {
   private readonly rest: BybitRest;
+  private readonly marketData: MarketData;
   private readonly broker: Broker;
   private readonly stream: KlineStream;
   private readonly strategy: Strategy;
@@ -54,9 +57,11 @@ export class Engine {
       recvWindow: cfg.recvWindow,
       host: cfg.restHost,
     });
+    // Validation guarantees a non-Bybit source is paper-only.
+    this.marketData = cfg.dataSource === 'okx' ? new OkxMarketData() : this.rest;
     this.broker = cfg.mode === 'live'
       ? new LiveBroker(this.rest)
-      : new PaperBroker(this.rest, {
+      : new PaperBroker(this.marketData, {
           startingEquity: cfg.startingEquity,
           takerFeeRate: cfg.takerFeeRate,
           slippagePct: cfg.slippagePct,
@@ -69,9 +74,11 @@ export class Engine {
       network: cfg.network,
       symbols: cfg.symbols,
       interval: cfg.interval,
-      rest: this.rest,
+      rest: this.marketData,
       // Same window the backtest uses, so live and simulated signals match.
       historyBars: strategyWindow(this.strategy.warmupBars),
+      // OKX has no push feed here, so poll for closed bars instead.
+      mode: cfg.dataSource === 'bybit' ? 'ws' : 'poll',
     });
     this.state = emptyState(tradingDayKey(Date.now(), cfg.dayResetHourUtc), cfg.startingEquity);
   }
@@ -101,6 +108,7 @@ export class Engine {
       strategy: this.strategy.name,
       symbols: this.cfg.symbols.join(','),
       interval: `${this.cfg.interval}m`,
+      dataSource: this.cfg.dataSource,
     });
 
     await this.broker.init(this.cfg.symbols, this.cfg.leverage);
@@ -395,6 +403,8 @@ export class Engine {
   }
 
   private snapshot(): HealthSnapshot {
+    const bars: Record<string, number> = {};
+    for (const symbol of this.cfg.symbols) bars[symbol] = this.stream.closedCandles(symbol).length;
     return {
       status: this.state.killSwitch || this.state.dailyStopHit ? 'halted' : 'ok',
       mode: this.cfg.mode,
@@ -404,6 +414,9 @@ export class Engine {
       dayStartEquity: Number(this.state.dayStartEquity.toFixed(4)),
       dailyPnl: Number((this.equity - this.state.dayStartEquity).toFixed(4)),
       openPositions: Object.keys(this.state.positions).length,
+      warmedUp: this.stream.isWarm(this.strategy.warmupBars),
+      bars,
+      barsRequired: this.strategy.warmupBars,
       tradesToday: this.state.tradesToday,
       dailyStopHit: this.state.dailyStopHit,
       killSwitch: this.state.killSwitch,

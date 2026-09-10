@@ -1,5 +1,5 @@
 import { log } from '../logger.js';
-import type { BybitRest } from '../bybit/rest.js';
+import type { MarketData } from '../data/types.js';
 import type { Candle, Instrument, Position, Side, Ticker, WalletBalance } from '../bybit/types.js';
 import type { Broker, ClosedTrade, OpenRequest } from './types.js';
 
@@ -37,7 +37,7 @@ export class PaperBroker implements Broker {
   private readonly instruments = new Map<string, Instrument>();
   private pending: ClosedTrade[] = [];
 
-  constructor(private readonly rest: BybitRest, private readonly opts: PaperOptions) {
+  constructor(private readonly rest: MarketData, private readonly opts: PaperOptions) {
     this.equity = opts.startingEquity;
   }
 
@@ -45,7 +45,7 @@ export class PaperBroker implements Broker {
     for (const symbol of symbols) {
       this.instruments.set(symbol, await this.rest.instrument(symbol));
     }
-    log.info('Paper broker ready', { equity: this.equity.toFixed(2) });
+    log.info('Paper broker ready', { equity: this.equity.toFixed(2), venue: this.rest.venue });
   }
 
   async instrument(symbol: string): Promise<Instrument> {

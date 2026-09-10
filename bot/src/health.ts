@@ -10,6 +10,11 @@ export interface HealthSnapshot {
   dayStartEquity: number;
   dailyPnl: number;
   openPositions: number;
+  /** True once every symbol holds enough closed candles for the strategy to act. */
+  warmedUp: boolean;
+  /** Closed candles buffered per symbol, against the number required. */
+  bars: Record<string, number>;
+  barsRequired: number;
   tradesToday: number;
   dailyStopHit: boolean;
   killSwitch: boolean;

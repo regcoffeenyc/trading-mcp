@@ -82,7 +82,7 @@ balance.
 cd bot
 npm install
 npm run build
-npm test                    # 49 tests, no network needed
+npm test                    # 51 tests, no network needed
 npm run setup               # finds your Api note, writes .env
 ```
 
@@ -191,10 +191,24 @@ The ones that decide whether the account survives:
 | `MAX_TRADES_PER_DAY` | `6` | Fee brake |
 | `MAX_CONSECUTIVE_LOSSES` | `3` | Losing streak triggers a cooldown |
 | `LEVERAGE` | `5` | Higher leverage moves liquidation closer than your stop |
+| `DATA_SOURCE` | `bybit` | `okx` lets paper trading run where Bybit's API is blocked |
 
 The bot **refuses to start** on an incoherent risk config — for example a
 per-trade risk larger than the daily loss limit, or an equity floor above
 starting equity.
+
+### If Bybit's API is blocked in your region
+
+Bybit geo-blocks some countries at the CDN, which makes its REST API
+unreachable even though the WebSocket still works. Set `DATA_SOURCE=okx` and
+paper trading runs on OKX's candles for the same USDT perpetuals, polling for
+closed bars instead of subscribing to a socket. Bybit's own $5 minimum order
+value is still applied, so sizing rehearses the real constraint.
+
+This is **paper only**, and the bot refuses to start if you combine it with
+`MODE=live`: real orders must be priced by the venue that fills them, and
+sizing a position against another exchange's book would put the stop in the
+wrong place.
 
 ### Symbol choice matters on $50
 
@@ -314,7 +328,7 @@ src/
 npm run build && npm test
 ```
 
-49 tests, no network required. They cover order-step rounding (where a rounding
+51 tests, no network required. They cover order-step rounding (where a rounding
 bug means a rejected order or an oversized position), indicator correctness,
 every risk gate, config validation, the backtest loop, credential parsing, HMAC
 request signing verified against an independent checker, kline ordering and

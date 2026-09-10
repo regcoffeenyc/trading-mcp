@@ -1,6 +1,7 @@
 import type { LogLevel } from './logger.js';
 
 export type Mode = 'live' | 'paper';
+export type DataSource = 'bybit' | 'okx';
 export type StrategyName = 'trend' | 'meanrev';
 
 export interface Config {
@@ -13,6 +14,11 @@ export interface Config {
   recvWindow: string;
   /** Optional REST host override for regions where api.bybit.com is blocked. */
   restHost?: string;
+  /**
+   * Where market data comes from. 'okx' lets paper trading run where Bybit's
+   * REST API is blocked; it is never permitted for live orders.
+   */
+  dataSource: DataSource;
 
   symbols: string[];
   interval: string;
@@ -94,6 +100,7 @@ export function loadConfig(): Config {
     apiSecret: needsKeys ? req('BYBIT_API_SECRET') : process.env.BYBIT_API_SECRET ?? '',
     recvWindow: process.env.BYBIT_RECV_WINDOW ?? '5000',
     restHost: process.env.BYBIT_REST_HOST || undefined,
+    dataSource: oneOf('DATA_SOURCE', ['bybit', 'okx'] as const, 'bybit'),
 
     symbols: (process.env.SYMBOLS ?? 'BTCUSDT,ETHUSDT,SOLUSDT')
       .split(',')
@@ -159,6 +166,12 @@ export function validate(cfg: Config): void {
   if (cfg.takeProfitR <= 0) errors.push('TAKE_PROFIT_R must be positive.');
   if (cfg.dayResetHourUtc < 0 || cfg.dayResetHourUtc > 23) errors.push('DAY_RESET_HOUR_UTC must be 0-23.');
   if (cfg.tickMs < 100 || cfg.tickMs > 300_000) errors.push('TICK_MS must be between 100 and 300000.');
+  if (cfg.dataSource !== 'bybit' && cfg.mode === 'live') {
+    errors.push(
+      `DATA_SOURCE=${cfg.dataSource} cannot be used with MODE=live. Real orders must be priced by the ` +
+      'venue that fills them; another exchange\'s prices would size and stop positions against the wrong book.',
+    );
+  }
 
   const riskUsd = (cfg.startingEquity * cfg.riskPerTradePct) / 100;
   if (riskUsd > cfg.maxDailyLossUsd) {

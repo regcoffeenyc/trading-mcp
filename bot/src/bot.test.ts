@@ -22,7 +22,7 @@ const INSTRUMENT: Instrument = {
 function baseConfig(overrides: Partial<Config> = {}): Config {
   return {
     mode: 'paper', network: 'mainnet', apiKey: '', apiSecret: '', recvWindow: '5000',
-    symbols: ['TESTUSDT'], interval: '15', strategy: 'trend', leverage: 5,
+    symbols: ['TESTUSDT'], interval: '15', strategy: 'trend', leverage: 5, dataSource: 'bybit',
     startingEquity: 50, riskPerTradePct: 3, maxDailyLossUsd: 15, maxDailyProfitUsd: 0,
     equityFloorUsd: 20, maxConcurrentPositions: 1, maxTradesPerDay: 8,
     maxConsecutiveLosses: 3, cooldownMinutes: 60, dayResetHourUtc: 0, flattenOnDailyStop: true,
@@ -193,6 +193,17 @@ test('config rejects a per-trade risk larger than the daily loss limit', () => {
 
 test('config rejects an equity floor at or above starting equity', () => {
   assert.throws(() => validate(baseConfig({ equityFloorUsd: 50 })), /EQUITY_FLOOR_USD/);
+});
+
+test('OKX market data is refused for live trading', () => {
+  assert.throws(
+    () => validate(baseConfig({ dataSource: 'okx', mode: 'live' })),
+    /cannot be used with MODE=live/,
+  );
+});
+
+test('OKX market data is allowed for paper trading', () => {
+  assert.doesNotThrow(() => validate(baseConfig({ dataSource: 'okx', mode: 'paper' })));
 });
 
 test('config accepts the shipped defaults', () => {

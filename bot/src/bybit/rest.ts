@@ -4,6 +4,7 @@ import { log } from '../logger.js';
 import type {
   Candle, ClosedPnl, Instrument, OrderRequest, OrderResult, Position, Ticker, WalletBalance,
 } from './types.js';
+import type { MarketData } from '../data/types.js';
 
 const HOSTS = {
   mainnet: 'https://api.bybit.com',
@@ -36,7 +37,8 @@ export interface RestOptions {
   host?: string;
 }
 
-export class BybitRest {
+export class BybitRest implements MarketData {
+  readonly venue = 'bybit' as const;
   private readonly host: string;
   private readonly key: string;
   private readonly secret: string;
