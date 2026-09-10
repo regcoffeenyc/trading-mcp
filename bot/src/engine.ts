@@ -11,7 +11,7 @@ import { startHealthServer, type HealthSnapshot } from './health.js';
 import { log } from './logger.js';
 import { floorToStep, roundToStep, sleep, tradingDayKey, usd } from './util.js';
 import type { Config } from './config.js';
-import type { Candle } from './bybit/types.js';
+import type { Candle, Position } from './bybit/types.js';
 
 const TICK_MS = 15_000;
 
@@ -37,7 +37,14 @@ export class Engine {
   private equity = 0;
   private lastBarAt: number | null = null;
   private running = false;
-  private busy = false;
+  /**
+   * Serialises every unit of work. A bar close and the risk tick must never run
+   * concurrently — they both read and write positions and state — but a bar must
+   * not be dropped either, because that is a missed signal or, worse, position
+   * management that never happens. Chaining rather than a busy flag gives
+   * mutual exclusion without losing work.
+   */
+  private queue: Promise<void> = Promise.resolve();
   private healthServer: ReturnType<typeof startHealthServer> = null;
   private readonly startedAt = Date.now();
 
@@ -103,7 +110,7 @@ export class Engine {
     this.stream.on('bar', (symbol: string, candle: Candle) => {
       this.lastBarAt = Date.now();
       this.broker.onCandle?.(symbol, candle);
-      void this.onBar(symbol);
+      void this.runExclusive(`Bar ${symbol}`, () => this.onBar(symbol));
     });
     await this.stream.start();
 
@@ -127,31 +134,43 @@ export class Engine {
 
   // ------------------------------------------------------------- timer clock
 
+  /** Queues `fn`, guaranteeing it runs alone and that a failure cannot break the chain. */
+  private runExclusive(label: string, fn: () => Promise<void>): Promise<void> {
+    this.queue = this.queue
+      .then(fn)
+      .catch((err) => {
+        // A failure must never kill a 24/7 process, nor stall everything behind it.
+        log.error(`${label} failed`, { error: err instanceof Error ? err.stack ?? err.message : String(err) });
+      });
+    return this.queue;
+  }
+
   private async tickLoop(): Promise<void> {
     while (this.running) {
-      try {
-        await this.tick();
-      } catch (err) {
-        // A failed tick must never kill a 24/7 process; log and try again.
-        log.error('Tick failed', { error: err instanceof Error ? err.stack ?? err.message : String(err) });
-      }
+      await this.runExclusive('Risk tick', () => this.tick());
       await sleep(TICK_MS);
     }
   }
 
+  /**
+   * Account-level work, every 15 seconds. Position management lives here rather
+   * than on the bar clock so a stop reaches breakeven, a trailing stop advances
+   * and a max-hold timeout fires within seconds instead of waiting up to a full
+   * candle.
+   */
   private async tick(): Promise<void> {
-    if (this.busy) return;
-    this.busy = true;
-    try {
-      await this.reconcileClosures();
-      const balance = await this.broker.balance();
-      this.equity = balance.equity;
-      await this.maybeRollDay();
-      await this.enforceGuards();
-      this.store.save(this.state);
-    } finally {
-      this.busy = false;
+    await this.reconcileClosures();
+    const balance = await this.broker.balance();
+    this.equity = balance.equity;
+    await this.maybeRollDay();
+    await this.enforceGuards();
+    const managed = Object.keys(this.state.positions);
+    if (managed.length > 0 && !this.state.dailyStopHit && !this.state.killSwitch) {
+      // Fetch once and reuse, rather than one position call per symbol.
+      const live = await this.broker.positions();
+      for (const symbol of managed) await this.managePosition(symbol, live);
     }
+    this.store.save(this.state);
   }
 
   private async maybeRollDay(): Promise<void> {
@@ -224,25 +243,19 @@ export class Engine {
 
   // -------------------------------------------------------------- bar clock
 
+  /** A closed candle is the only thing that may open a new position. */
   private async onBar(symbol: string): Promise<void> {
-    if (this.busy) return;
-    this.busy = true;
-    try {
-      await this.managePosition(symbol);
-      await this.considerEntry(symbol);
-      this.store.save(this.state);
-    } catch (err) {
-      log.error('Bar handling failed', { symbol, error: err instanceof Error ? err.stack ?? err.message : String(err) });
-    } finally {
-      this.busy = false;
-    }
+    await this.managePosition(symbol);
+    await this.considerEntry(symbol);
+    this.store.save(this.state);
   }
 
   /** Breakeven stop, ATR trailing stop and the maximum-hold timeout. */
-  private async managePosition(symbol: string): Promise<void> {
+  private async managePosition(symbol: string, prefetched?: Position[]): Promise<void> {
     const managed = this.state.positions[symbol];
     if (!managed) return;
-    const live = (await this.broker.positions()).find((p) => p.symbol === symbol);
+    const positions = prefetched ?? (await this.broker.positions());
+    const live = positions.find((p) => p.symbol === symbol);
     if (!live) return;
 
     const inst = await this.broker.instrument(symbol);
