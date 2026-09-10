@@ -310,3 +310,85 @@ Concretely, before any money goes in:
 
 Until then the honest position is that this is a working bot with nothing
 profitable to run.
+
+---
+
+# Edge search on the full universe (2026-09-10)
+
+After the shipped strategy came back at zero, the search widened: every Bybit
+USDT perpetual (758 contracts, 479 with usable history), daily candles and
+funding history from 2021-11-09 to 2026-09-10, five signals compared under one
+cost model.
+
+## Why the universe was rebuilt
+
+The failed test used 30 symbols chosen from memory. Bybit lists 758. Picking
+recognisable names selects for coins that did well enough to stay recognisable —
+survivorship bias applied by hand, and the most likely source of the phantom
++0.253 R. One of those 30, MATICUSDT, returned zero bars because it has since
+been delisted: the bias visible in miniature.
+
+## First screen — five signals, three holding periods
+
+Long the top basket, short the bottom, equal weight, funding accounted for,
+0.055% taker plus 0.02% slippage per side.
+
+Gross t statistics (before costs, which are a separable drag):
+
+| Signal | hold 1d | hold 7d | hold 30d |
+|---|---|---|---|
+| momentum 30d | 0.98 | **2.40** | 0.34 |
+| momentum 90d | 1.41 | 1.85 | 0.33 |
+| reversal 3d | −0.28 | −2.18 | −1.02 |
+| funding carry | 0.61 | −1.72 | — |
+| low volatility | −1.14 | −0.04 | −0.45 |
+
+One cell cleared 2. Fifteen were examined, so that is roughly what chance
+produces — precisely the mistake that generated the first false positive.
+
+Worth noting separately: a **daily** rebalance costs 55% a year in fees alone at
+taker rates. No signal in this family survives that, independent of whether it
+works.
+
+## Second screen — trying to break the survivor
+
+30-day momentum, weekly rebalance, examined across 26 parameter combinations:
+
+- **Out of sample:** first half t = 0.02, second half t = 1.54, last third
+  t = 1.63. The effect exists only in recent data and is not significant even
+  there.
+- **Lookback:** 10d t = 0.64, 20d **−0.11**, 30d 1.31, 45d **−0.70**, 60d 1.04,
+  90d 0.74. The sign alternates between neighbouring parameters. A real effect
+  degrades smoothly; this is the shape of noise.
+- **Holding period:** consistently positive, 0.76 to 2.17, peaking at 10 days.
+  The one dimension that behaves.
+- **Basket size:** consistently positive, 1.31 to 1.74.
+- **Liquidity:** t falls from 1.31 to 0.61 as the turnover floor rises. The
+  effect lives in thinner names, where the fills a backtest assumes are least
+  likely to exist.
+
+Best t anywhere: **2.17**. Threshold after 26 looks: **≈3.6**.
+
+## Conclusion
+
+**No signal tested clears the bar.** Not momentum, not reversal, not funding
+carry, not low volatility — on any holding period, before or after costs.
+
+This is a real result rather than a failure to find one. Simple price-and-funding
+signals on crypto perpetuals, tested against the full universe with a
+significance threshold and honest costs, do not show an exploitable edge. The
+strategies that appear to work in a small hand-picked backtest are the same ones
+that stop working when the selection bias is removed.
+
+## What this implies for a $50 account
+
+Even had momentum survived, it needs 20 simultaneous positions. At Bybit's $5
+minimum order that is $100 of notional against $50 of equity, and roughly 11% of
+the account per year in rebalancing fees. The strategies with a plausible edge in
+crypto need infrastructure (market making, latency), capital (spot-perp basis at
+scale), or information (order flow, on-chain) — none of which a $50 retail API
+account has.
+
+The bot is sound and the harness now tells the truth quickly. What it does not
+have is something profitable to run, and no amount of further parameter search
+on this data will produce one.
