@@ -1,4 +1,5 @@
 import { BybitRest } from './bybit/rest.js';
+import { fetchOkxHistory } from './data/okx.js';
 import { createStrategy } from './strategy/index.js';
 import { RiskManager } from './risk.js';
 import { loadEnvFile } from './env.js';
@@ -65,7 +66,29 @@ export interface BacktestResult {
   feesPaid: number;
 }
 
-export async function runBacktest(cfg: Config, symbol: string, bars: number): Promise<BacktestResult> {
+export type DataSource = 'bybit' | 'okx';
+
+/**
+ * Bybit's own linear-perp filters. Used only when the instrument endpoint is
+ * unreachable (geo-block), so a proxy-data backtest still sizes against the
+ * constraint that actually matters on a small account: the $5 minimum order.
+ */
+const BYBIT_LINEAR_DEFAULTS: Omit<Instrument, 'symbol'> = {
+  tickSize: '0.0001',
+  qtyStep: '0.1',
+  minOrderQty: '0.1',
+  maxOrderQty: '1000000',
+  minNotionalValue: 5,
+  maxLeverage: 25,
+};
+
+export async function runBacktest(
+  cfg: Config, symbol: string, bars: number, source: DataSource = 'bybit',
+): Promise<BacktestResult & { source: DataSource }> {
+  if (source === 'okx') {
+    const candles = await fetchOkxHistory(symbol, cfg.interval, bars);
+    return { ...simulate(cfg, symbol, candles, { symbol, ...BYBIT_LINEAR_DEFAULTS }), source };
+  }
   // Testnet history is thin and unrepresentative, so backtests always read
   // mainnet public data regardless of where the bot itself is pointed.
   const rest = new BybitRest({
@@ -74,7 +97,7 @@ export async function runBacktest(cfg: Config, symbol: string, bars: number): Pr
   });
   const candles = await rest.klineHistory(symbol, cfg.interval, bars);
   const instrument = await rest.instrument(symbol);
-  return simulate(cfg, symbol, candles, instrument);
+  return { ...simulate(cfg, symbol, candles, instrument), source };
 }
 
 export function simulate(cfg: Config, symbol: string, candles: Candle[], instrument: Instrument): BacktestResult {
@@ -306,6 +329,7 @@ async function main(): Promise<void> {
   configureLogger({ level: cfg.logLevel });
   const bars = Number(process.env.BACKTEST_BARS ?? 5000);
   const symbols = (process.env.BACKTEST_SYMBOLS ?? cfg.symbols.join(',')).split(',').map((s) => s.trim());
+  const requested = (process.env.BACKTEST_SOURCE ?? 'bybit') as DataSource;
 
   console.log(`Backtesting ${cfg.strategy} on ${symbols.join(', ')} — ${bars} bars of ${cfg.interval}m data`);
   console.log(
@@ -314,14 +338,39 @@ async function main(): Promise<void> {
   );
 
   const results: BacktestResult[] = [];
+  let source = requested;
   for (const symbol of symbols) {
     try {
-      const result = await runBacktest(cfg, symbol, bars);
+      const result = await runBacktest(cfg, symbol, bars, source);
       results.push(result);
       console.log(formatResult(result, cfg));
     } catch (err) {
+      // A geo-block or outage on Bybit should not end the run; OKX lists the
+      // same perpetuals and answers the same question about strategy edge.
+      if (source === 'bybit' && /restricted|blocked|403|CloudFront|fetch failed|HTTP 4/i.test(String(err))) {
+        console.error(`\nBybit REST is unreachable from here (${String(err).slice(0, 100)}).`);
+        console.error('Falling back to OKX data for the same perpetuals.\n');
+        source = 'okx';
+        try {
+          const result = await runBacktest(cfg, symbol, bars, source);
+          results.push(result);
+          console.log(formatResult(result, cfg));
+          continue;
+        } catch (fallbackErr) {
+          console.error(`OKX fallback also failed for ${symbol}: ${String(fallbackErr)}`);
+          continue;
+        }
+      }
       console.error(`Backtest failed for ${symbol}: ${String(err)}`);
     }
+  }
+  if (source === 'okx') {
+    console.log(
+      '\nNOTE: these numbers come from OKX candles for the same USDT perpetuals, ' +
+      'because Bybit REST was unreachable. Prices track Bybit within a few basis points, ' +
+      'so the read on strategy edge is sound — but re-run with BACKTEST_SOURCE=bybit ' +
+      'from a machine that can reach Bybit before trusting the exact figures.',
+    );
   }
 
   if (results.length > 1) {
