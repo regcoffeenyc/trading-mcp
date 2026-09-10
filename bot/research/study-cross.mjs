@@ -120,24 +120,35 @@ function run(signalName) {
     const shorts = rows.slice(-BASKET);
     const longPnl = longs.reduce((s, r) => s + r.fwd - r.fund, 0) / BASKET;
     const shortPnl = shorts.reduce((s, r) => s + -r.fwd + r.fund, 0) / BASKET;
-    const cost = 2 * (TAKER + SLIP) * 2;
-    periods.push({ gross: (longPnl + shortPnl) / 2, net: (longPnl + shortPnl) / 2 - cost });
+    // Half the capital sits in each leg, and each leg turns over completely
+    // per rebalance — one exit and one entry, both taker.
+    const cost = 2 * 0.5 * 2 * (TAKER + SLIP);
+    const gross = (longPnl + shortPnl) / 2;
+    periods.push({ gross, net: gross - cost });
   }
   return periods;
 }
 
 console.log(`\nbasket ${BASKET}/side, hold ${HOLD}d, min turnover $${MIN_TURNOVER.toLocaleString()}`);
 console.log('');
-console.log('signal        periods   net/period   annualised   t-stat   Sharpe   verdict');
+console.log(`cost per rebalance: ${(2 * 0.5 * 2 * (TAKER + SLIP) * 100).toFixed(3)}% of capital` +
+  `  (${(2 * 0.5 * 2 * (TAKER + SLIP) * (365 / HOLD) * 100).toFixed(0)}% per year at this frequency)`);
+console.log('');
+console.log('signal       periods  gross/period  gross t   net/period  net annual  net t   verdict');
 for (const name of Object.keys(SIGNALS)) {
   const periods = run(name);
+  const gross = stats(periods.map((p) => p.gross));
   const net = stats(periods.map((p) => p.net));
-  if (!net) { console.log(name.padEnd(13) + 'insufficient data'); continue; }
-  const verdict = Math.abs(net.t) > 2 ? (net.t > 0 ? 'SIGNIFICANT +' : 'SIGNIFICANT -') : 'noise';
+  if (!net || !gross) { console.log(name.padEnd(13) + 'insufficient data'); continue; }
+  // The verdict is about gross: costs are a known drag, but a signal with no
+  // gross edge can never be rescued by trading it more cheaply.
+  const verdict = Math.abs(gross.t) > 2 ? (gross.t > 0 ? 'REAL SIGNAL' : 'inverted') : 'noise';
   console.log(
-    name.padEnd(14) + String(net.n).padStart(6) +
+    name.padEnd(13) + String(net.n).padStart(6) +
+    (gross.mean * 100).toFixed(4).padStart(13) + '%' +
+    gross.t.toFixed(2).padStart(9) +
     (net.mean * 100).toFixed(4).padStart(12) + '%' +
-    (net.annual * 100).toFixed(1).padStart(12) + '%' +
-    net.t.toFixed(2).padStart(9) + net.sharpe.toFixed(2).padStart(9) + '   ' + verdict,
+    (net.annual * 100).toFixed(1).padStart(11) + '%' +
+    net.t.toFixed(2).padStart(8) + '   ' + verdict,
   );
 }
