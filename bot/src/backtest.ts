@@ -3,6 +3,7 @@ import { fetchOkxHistory } from './data/okx.js';
 import { createStrategy, strategyWindow } from './strategy/index.js';
 import { RiskManager } from './risk.js';
 import { loadEnvFile } from './env.js';
+import { isMainModule } from './cli.js';
 import { loadConfig, type Config } from './config.js';
 import { configureLogger, log } from './logger.js';
 import { emptyState } from './state.js';
@@ -395,6 +396,6 @@ async function main(): Promise<void> {
   );
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   main().catch((err) => { console.error(err); process.exit(1); });
 }

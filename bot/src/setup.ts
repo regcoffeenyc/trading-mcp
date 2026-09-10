@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { redact } from './logger.js';
+import { isMainModule } from './cli.js';
 
 /**
  * First-run setup: locates the note holding the Bybit API credentials, writes a
@@ -157,6 +158,6 @@ async function main(): Promise<void> {
   console.log('  npm start           start paper trading');
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   main().catch((err) => { console.error(err); process.exit(1); });
 }

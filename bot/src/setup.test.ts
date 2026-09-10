@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseCredentials, renderEnv } from './setup.js';
+import { isMainModule } from './cli.js';
 
 const KEY = 'AbCdEfGhIjKlMnOpQr';
 const SECRET = 'ZyXwVuTsRqPoNmLkJiHgFeDcBa9876543210';
@@ -50,4 +51,38 @@ test('renderEnv substitutes values without dropping comments', () => {
 test('renderEnv appends keys the template does not contain', () => {
   const out = renderEnv('MODE=paper\n', { NEW_SETTING: 'x' });
   assert.match(out, /^NEW_SETTING=x$/m);
+});
+
+// ------------------------------------------------------------- CLI detection
+
+test('isMainModule matches a POSIX entry path', () => {
+  const original = process.argv[1];
+  try {
+    process.argv[1] = '/home/user/bot/dist/setup.js';
+    assert.equal(isMainModule('file:///home/user/bot/dist/setup.js'), true);
+    assert.equal(isMainModule('file:///home/user/bot/dist/other.js'), false);
+  } finally {
+    process.argv[1] = original as string;
+  }
+});
+
+test('isMainModule matches a Windows entry path', () => {
+  // The regression this guards: argv[1] arrives as a backslash path while
+  // import.meta.url is a file URL, so a string comparison never matches and
+  // the CLI silently does nothing.
+  const original = process.argv[1];
+  try {
+    process.argv[1] = 'C:\\Users\\User\\bot\\dist\\setup.js';
+    const url = 'file:///C:/Users/User/bot/dist/setup.js';
+    assert.notEqual(url, `file://${process.argv[1]}`, 'the naive comparison should not match');
+    if (process.platform === 'win32') {
+      assert.equal(isMainModule(url), true);
+    }
+  } finally {
+    process.argv[1] = original as string;
+  }
+});
+
+test('isMainModule is false for a non-file URL', () => {
+  assert.equal(isMainModule('data:text/javascript,0'), false);
 });
