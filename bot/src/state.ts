@@ -49,6 +49,12 @@ export interface BotState {
   totalTrades: number;
   totalPnl: number;
   startedAt: number;
+  /**
+   * Simulated cash balance, paper mode only. A paper run is meant to last weeks
+   * and will be restarted — for a reboot, a config tweak, a crash — so the
+   * equity curve has to survive that or the experiment measures nothing.
+   */
+  paperEquity?: number;
 }
 
 const MAX_RECENT_TRADES = 200;

@@ -41,6 +41,14 @@ export class PaperBroker implements Broker {
     this.equity = opts.startingEquity;
   }
 
+  /** Cash balance excluding open-position P&L — the figure that is persisted. */
+  get cashEquity(): number { return this.equity; }
+
+  /** Restores a previous run's balance so a restart continues the same curve. */
+  restoreEquity(equity: number): void {
+    if (Number.isFinite(equity) && equity > 0) this.equity = equity;
+  }
+
   async init(symbols: string[], _leverage: number): Promise<void> {
     for (const symbol of symbols) {
       this.instruments.set(symbol, await this.rest.instrument(symbol));

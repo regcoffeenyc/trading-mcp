@@ -112,6 +112,17 @@ export class Engine {
     });
 
     await this.broker.init(this.cfg.symbols, this.cfg.leverage);
+
+    // Restore the paper balance before the first read, so a restart continues
+    // the existing equity curve instead of silently starting over at $50.
+    if (this.broker instanceof PaperBroker) {
+      const saved = this.store.load(tradingDayKey(Date.now(), this.cfg.dayResetHourUtc), this.cfg.startingEquity);
+      if (saved.paperEquity !== undefined) {
+        this.broker.restoreEquity(saved.paperEquity);
+        log.info('Restored paper balance from previous run', { equity: usd(saved.paperEquity) });
+      }
+    }
+
     const balance = await this.broker.balance();
     this.equity = balance.equity;
 
@@ -185,6 +196,7 @@ export class Engine {
    */
   private async tick(): Promise<void> {
     await this.reconcileClosures();
+    if (this.broker instanceof PaperBroker) this.state.paperEquity = this.broker.cashEquity;
     const balance = await this.broker.balance();
     this.equity = balance.equity;
     await this.maybeRollDay();

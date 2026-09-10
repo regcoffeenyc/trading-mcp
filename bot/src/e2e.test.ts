@@ -115,3 +115,34 @@ test('the daily loss stop halts trading and is not reset by a restart', async ()
   const worstDay = Math.min(0, state.totalPnl);
   assert.ok(worstDay > -5, `daily stop failed to contain losses: ${worstDay}`);
 });
+
+test('a paper run keeps its equity curve across a restart', async () => {
+  const { PaperBroker } = await import('./broker/paper.js');
+  const { StateStore, emptyState } = await import('./state.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-paper-'));
+  const stateFile = path.join(dir, 'state.json');
+  const store = new StateStore(stateFile);
+
+  // First run ends down $7.40 on the day.
+  const first = emptyState('2026-01-01', 50);
+  first.paperEquity = 42.6;
+  store.save(first);
+
+  // A restart must adopt that balance, not reset to STARTING_EQUITY_USD.
+  const reloaded = store.load('2026-01-01', 50);
+  assert.equal(reloaded.paperEquity, 42.6);
+
+  const broker = new PaperBroker(
+    { venue: 'okx', instrument: async () => { throw new Error('unused'); },
+      ticker: async () => { throw new Error('unused'); }, klines: async () => [] },
+    { startingEquity: 50, takerFeeRate: 0.00055, slippagePct: 0.02 },
+  );
+  assert.equal((await broker.balance()).equity, 50, 'a fresh broker starts at the configured equity');
+  broker.restoreEquity(reloaded.paperEquity!);
+  assert.equal((await broker.balance()).equity, 42.6, 'the restored balance must carry over');
+
+  // A nonsense value must not wipe out a run.
+  broker.restoreEquity(0);
+  broker.restoreEquity(Number.NaN);
+  assert.equal((await broker.balance()).equity, 42.6, 'invalid restores are ignored');
+});
