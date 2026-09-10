@@ -195,8 +195,19 @@ sized within your risk budget. Prefer liquid, lower-priced perps.
 
 ### Windows
 
+First-time install, one command from the `bot` folder:
+
 ```powershell
-# from the bot folder, in an elevated PowerShell
+powershell -ExecutionPolicy Bypass -File deploy\windows\bootstrap.ps1
+```
+
+That installs, builds, runs the tests, writes `.env` from your credentials note
+and runs the pre-flight check. It does not start trading and sends no orders.
+
+To keep it running:
+
+```powershell
+# elevated PowerShell
 powershell -ExecutionPolicy Bypass -File deploy\windows\install-task.ps1
 Start-ScheduledTask -TaskName BybitBot
 ```
