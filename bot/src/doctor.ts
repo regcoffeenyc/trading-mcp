@@ -35,6 +35,24 @@ async function main(): Promise<void> {
       return `equity ${usd(balance.equity)}, available ${usd(balance.available)}`;
     });
     await check('Positions readable', async () => `${(await rest.positions()).length} open`);
+
+    await check('API key can trade', async () => {
+      const info = await rest.apiKeyInfo();
+      const detail =
+        `scopes [${info.contractScopes.join(', ') || 'none'}], ` +
+        `readOnly=${info.readOnly}, unified=${info.unifiedAccount}, ` +
+        `ip=${info.ipRestriction}, expires ${info.expiresAt ?? 'never'}`;
+      if (!info.canTrade) {
+        throw new Error(
+          `${detail} — this key CANNOT place orders. ` +
+          'Create a key at bybit.com with Contract Orders+Positions and read-only OFF.',
+        );
+      }
+      if (!info.unifiedAccount) {
+        throw new Error(`${detail} — account is not Unified Trading, which this bot requires.`);
+      }
+      return detail;
+    });
   } else {
     results.push(['API credentials', true, 'not set (paper mode only)']);
   }

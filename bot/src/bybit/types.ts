@@ -75,3 +75,14 @@ export interface OrderResult {
   orderId: string;
   orderLinkId: string;
 }
+
+export interface ApiKeyInfo {
+  note: string;
+  /** Bybit's master switch: when true, every order is rejected regardless of scopes. */
+  readOnly: boolean;
+  unifiedAccount: boolean;
+  expiresAt: string | null;
+  ipRestriction: string;
+  contractScopes: string[];
+  canTrade: boolean;
+}

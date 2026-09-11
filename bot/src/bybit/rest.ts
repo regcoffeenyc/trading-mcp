@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { RetryableError, retry } from '../util.js';
 import { log } from '../logger.js';
 import type {
-  Candle, ClosedPnl, Instrument, OrderRequest, OrderResult, Position, Ticker, WalletBalance,
+  ApiKeyInfo, Candle, ClosedPnl, Instrument, OrderRequest, OrderResult, Position, Ticker, WalletBalance,
 } from './types.js';
 import type { MarketData } from '../data/types.js';
 
@@ -241,6 +241,28 @@ export class BybitRest implements MarketData {
     return {
       equity: Number(usdt?.equity ?? 0),
       available: Number(usdt?.availableToWithdraw ?? usdt?.walletBalance ?? 0),
+    };
+  }
+
+  /**
+   * What this API key is actually allowed to do.
+   *
+   * Bybit's `readOnly` flag overrides the scope list: a key can advertise
+   * ContractTrade permissions and still reject every order. Checking it is the
+   * difference between finding out now and finding out when the first signal
+   * fires on a funded account.
+   */
+  async apiKeyInfo(): Promise<ApiKeyInfo> {
+    const r = await this.request<any>('GET', '/v5/user/query-api', {}, true);
+    const contractScopes: string[] = r.permissions?.ContractTrade ?? [];
+    return {
+      note: r.note ?? '',
+      readOnly: r.readOnly === 1,
+      unifiedAccount: r.unified === 1,
+      expiresAt: r.expiredAt || null,
+      ipRestriction: (r.ips ?? []).join(', ') || 'none',
+      contractScopes,
+      canTrade: r.readOnly !== 1 && contractScopes.length > 0,
     };
   }
 
