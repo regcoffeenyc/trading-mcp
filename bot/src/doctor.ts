@@ -40,19 +40,27 @@ async function main(): Promise<void> {
       const info = await rest.apiKeyInfo();
       const detail =
         `scopes [${info.contractScopes.join(', ') || 'none'}], ` +
-        `readOnly=${info.readOnly}, unified=${info.unifiedAccount}, ` +
-        `ip=${info.ipRestriction}, expires ${info.expiresAt ?? 'never'}`;
+        `readOnly=${info.readOnly}, ip=${info.ipRestriction}, expires ${info.expiresAt ?? 'never'}`;
       if (!info.canTrade) {
         throw new Error(
           `${detail} — this key CANNOT place orders. ` +
           'Create a key at bybit.com with Contract Orders+Positions and read-only OFF.',
         );
       }
-      if (!info.unifiedAccount) {
-        throw new Error(`${detail} — account is not Unified Trading, which this bot requires.`);
+      return detail;
+    });
+
+    await check('Account is Unified', async () => {
+      // Read the account endpoint rather than the API key's `unified` flag,
+      // which reports 0 on UTA 2.0 and would condemn a working account.
+      const acct = await rest.accountInfo();
+      const detail = `${acct.description} (status ${acct.unifiedMarginStatus}), margin ${acct.marginMode}`;
+      if (!acct.isUnified) {
+        throw new Error(`${detail} — this bot trades the Unified wallet. Upgrade at bybit.com.`);
       }
       return detail;
     });
+
   } else {
     results.push(['API credentials', true, 'not set (paper mode only)']);
   }

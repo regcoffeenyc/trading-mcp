@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { RetryableError, retry } from '../util.js';
 import { log } from '../logger.js';
 import type {
-  ApiKeyInfo, Candle, ClosedPnl, Instrument, OrderRequest, OrderResult, Position, Ticker, WalletBalance,
+  AccountInfo, ApiKeyInfo, Candle, ClosedPnl, Instrument, OrderRequest, OrderResult, Position, Ticker, WalletBalance,
 } from './types.js';
 import type { MarketData } from '../data/types.js';
 
@@ -263,6 +263,30 @@ export class BybitRest implements MarketData {
       ipRestriction: (r.ips ?? []).join(', ') || 'none',
       contractScopes,
       canTrade: r.readOnly !== 1 && contractScopes.length > 0,
+    };
+  }
+
+  /**
+   * The account's real type, from Bybit's own account endpoint.
+   *
+   * Needed because the API-key endpoint's `unified` flag reads 0 on a UTA 2.0
+   * account, which makes a perfectly good account look unusable.
+   */
+  async accountInfo(): Promise<AccountInfo> {
+    const r = await this.request<any>('GET', '/v5/account/info', {}, true);
+    const status = Number(r.unifiedMarginStatus);
+    const DESCRIPTIONS: Record<number, string> = {
+      1: 'Classic account',
+      3: 'Unified Trading Account 1.0',
+      4: 'Unified Trading Account 1.0 (pro)',
+      5: 'Unified Trading Account 2.0',
+      6: 'Unified Trading Account 2.0 (pro)',
+    };
+    return {
+      unifiedMarginStatus: status,
+      isUnified: status >= 3,
+      marginMode: r.marginMode ?? '',
+      description: DESCRIPTIONS[status] ?? `unknown status ${status}`,
     };
   }
 

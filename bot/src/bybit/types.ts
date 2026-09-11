@@ -76,6 +76,18 @@ export interface OrderResult {
   orderLinkId: string;
 }
 
+export interface AccountInfo {
+  /**
+   * Bybit's authoritative account type. 1 = classic, 3/4 = UTA 1.0,
+   * 5/6 = UTA 2.0. The `unified` flag on the API-key endpoint reports 0 for
+   * UTA 2.0 accounts, so this is the field to trust.
+   */
+  unifiedMarginStatus: number;
+  isUnified: boolean;
+  marginMode: string;
+  description: string;
+}
+
 export interface ApiKeyInfo {
   note: string;
   /** Bybit's master switch: when true, every order is rejected regardless of scopes. */
