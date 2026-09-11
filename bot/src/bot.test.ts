@@ -315,3 +315,38 @@ test('a signal always carries a stop on the losing side of entry', () => {
   }
   assert.ok(checked > 0, 'expected at least one signal to validate');
 });
+
+// ------------------------------------------------- funding vs. drawdown floor
+
+test('an unfunded account waits rather than latching the kill switch', () => {
+  const risk = new RiskManager(baseConfig({ equityFloorUsd: 20 }));
+  const state = emptyState('2026-01-01', 0);
+  assert.equal(state.everFunded, false);
+
+  const verdict = risk.checkGuards(state, 0);
+  assert.equal(verdict.allowed, false);
+  assert.equal(verdict.waitingForFunding, true, 'an empty account is not in drawdown');
+  assert.equal(verdict.flatten, false, 'nothing to flatten on an empty account');
+  assert.match(verdict.reason, /Waiting for funding/);
+});
+
+test('the floor halts permanently once the account has held capital', () => {
+  const risk = new RiskManager(baseConfig({ equityFloorUsd: 20 }));
+  const state = emptyState('2026-01-01', 50);
+  assert.equal(state.everFunded, true, 'starting with equity counts as funded');
+
+  const verdict = risk.checkGuards(state, 18);
+  assert.equal(verdict.allowed, false);
+  assert.equal(verdict.waitingForFunding, undefined, 'this is a real drawdown, not a funding wait');
+  assert.equal(verdict.flatten, true);
+  assert.match(verdict.reason, /Halting permanently/);
+});
+
+test('a funded account that drains to zero still halts permanently', () => {
+  const risk = new RiskManager(baseConfig({ equityFloorUsd: 20 }));
+  const state = emptyState('2026-01-01', 50);
+  state.everFunded = true;
+  const verdict = risk.checkGuards(state, 0);
+  assert.equal(verdict.waitingForFunding, undefined);
+  assert.equal(verdict.flatten, true);
+});

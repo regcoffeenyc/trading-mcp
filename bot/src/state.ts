@@ -44,6 +44,12 @@ export interface BotState {
   /** Permanent halt (equity floor breach). Requires operator action to clear. */
   killSwitch: boolean;
   killSwitchReason: string;
+  /**
+   * True once equity has been seen above the floor. Distinguishes an account
+   * that has never been funded from one that has been traded down to the floor
+   * — the first should wait, the second must stop permanently.
+   */
+  everFunded: boolean;
   positions: Record<string, ManagedPosition>;
   recentTrades: TradeRecord[];
   totalTrades: number;
@@ -70,6 +76,7 @@ export function emptyState(day: string, equity: number): BotState {
     dailyStopHit: false,
     killSwitch: false,
     killSwitchReason: '',
+    everFunded: equity > 0,
     positions: {},
     recentTrades: [],
     totalTrades: 0,

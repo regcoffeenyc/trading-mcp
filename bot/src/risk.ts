@@ -13,6 +13,12 @@ export interface RiskVerdict {
   reason: string;
   /** True when the bot should also close whatever is already open. */
   flatten?: boolean;
+  /**
+   * Set when the only thing stopping trading is that the account holds no
+   * money yet. This is a hold, not a halt: no kill switch, no daily stop, and
+   * trading begins by itself once a deposit lands.
+   */
+  waitingForFunding?: boolean;
 }
 
 export interface AccountSnapshot {
@@ -50,6 +56,18 @@ export class RiskManager {
     }
 
     if (equity <= this.cfg.equityFloorUsd) {
+      // An account that has never held capital is not in drawdown — it is
+      // simply not funded yet. Latching the kill switch there would mean the
+      // operator deposits money into a bot that has already refused to trade.
+      if (!state.everFunded) {
+        return {
+          allowed: false,
+          reason: `Waiting for funding: equity ${usd(equity)} is below the ${usd(this.cfg.equityFloorUsd)} floor. ` +
+            'Trading starts on its own once the account is funded.',
+          flatten: false,
+          waitingForFunding: true,
+        };
+      }
       return {
         allowed: false,
         reason: `Equity ${usd(equity)} at or below floor ${usd(this.cfg.equityFloorUsd)}. Halting permanently.`,

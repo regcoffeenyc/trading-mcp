@@ -37,6 +37,7 @@ export class Engine {
   private state: BotState;
   private equity = 0;
   private lastBarAt: number | null = null;
+  private lastFundingNoticeAt = 0;
   private running = false;
   /**
    * Serialises every unit of work. A bar close and the risk tick must never run
@@ -224,8 +225,26 @@ export class Engine {
 
   /** Applies the daily loss stop, profit target and equity floor. */
   private async enforceGuards(): Promise<void> {
+    // Once real capital has been seen, the equity floor becomes a permanent
+    // halt. Before that it is only a hold, so an unfunded account does not
+    // latch the kill switch and refuse to trade the money it is waiting for.
+    if (this.equity > this.cfg.equityFloorUsd && !this.state.everFunded) {
+      this.state.everFunded = true;
+      log.info('Account funded, live trading armed', { equity: usd(this.equity) });
+      await this.notifier.send(`💰 Account funded: ${usd(this.equity)}. Trading is now armed.`);
+    }
+
     const verdict = this.risk.checkGuards(this.state, this.equity);
     if (verdict.allowed) return;
+
+    if (verdict.waitingForFunding) {
+      // Log once a minute at most; this is an idle state, not an incident.
+      if (Date.now() - this.lastFundingNoticeAt > 60_000) {
+        this.lastFundingNoticeAt = Date.now();
+        log.info('Waiting for funding', { equity: usd(this.equity), floor: usd(this.cfg.equityFloorUsd) });
+      }
+      return;
+    }
 
     const firstTrip = !this.state.dailyStopHit && !this.state.killSwitch;
     if (this.equity <= this.cfg.equityFloorUsd && !this.state.killSwitch) {
