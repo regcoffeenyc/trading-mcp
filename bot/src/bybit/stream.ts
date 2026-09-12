@@ -49,6 +49,10 @@ export class KlineStream extends EventEmitter {
   private lastMessageAt = 0;
   private reconnectAttempts = 0;
   private stopped = false;
+  /** Newest bar already handed to listeners, per symbol — emissions are idempotent. */
+  private readonly lastEmitted = new Map<string, number>();
+  /** The first seed fills history silently; later ones are catching up on a gap. */
+  private seeded = false;
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -99,12 +103,53 @@ export class KlineStream extends EventEmitter {
     this.ws = null;
   }
 
-  private async seed(): Promise<void> {
+  /**
+   * Fills each buffer from REST.
+   *
+   * The first call is startup history and stays silent. Every later call is a
+   * re-seed after the socket dropped, and any bar that closed while it was down
+   * is emitted now — otherwise the buffer would hold the bar but no listener
+   * would ever be told it closed, and the signal on it would be lost in silence.
+   */
+  async seed(): Promise<void> {
     for (const symbol of this.opts.symbols) {
+      const previousClose = this.newestClosedTime(symbol);
       const candles = await this.opts.rest.klines(symbol, this.opts.interval, this.opts.historyBars);
       this.buffers.set(symbol, candles);
       log.debug('Seeded candles', { symbol, bars: candles.length });
+      if (!this.seeded) continue;
+      const missed = candles.filter((c) => c.closed && c.time > previousClose);
+      const newest = missed[missed.length - 1];
+      if (newest) {
+        // Only the newest is announced: a listener reads the whole buffer, so
+        // replaying each intermediate bar would evaluate the same history over
+        // and over — a week of downtime would fire hundreds of identical passes.
+        log.info('Recovered bars missed while disconnected', {
+          symbol,
+          bars: missed.length,
+          newestBar: new Date(newest.time).toISOString(),
+        });
+        this.emitBar(symbol, newest);
+      }
     }
+    this.seeded = true;
+  }
+
+  private newestClosedTime(symbol: string): number {
+    const buffer = this.buffers.get(symbol);
+    if (!buffer) return -Infinity;
+    for (let i = buffer.length - 1; i >= 0; i -= 1) {
+      if (buffer[i]!.closed) return buffer[i]!.time;
+    }
+    return -Infinity;
+  }
+
+  /** Single emission point, so the same bar is never delivered twice. */
+  private emitBar(symbol: string, candle: Candle): void {
+    const seen = this.lastEmitted.get(symbol);
+    if (seen !== undefined && candle.time <= seen) return;
+    this.lastEmitted.set(symbol, candle.time);
+    this.emit('bar', symbol, candle);
   }
 
   /**
@@ -124,11 +169,11 @@ export class KlineStream extends EventEmitter {
           if (existing >= 0) {
             const previouslyClosed = buffer[existing]!.closed;
             buffer[existing] = candle;
-            if (candle.closed && !previouslyClosed) this.emit('bar', symbol, candle);
+            if (candle.closed && !previouslyClosed) this.emitBar(symbol, candle);
           } else if (candle.time > (buffer[buffer.length - 1]?.time ?? 0)) {
             buffer.push(candle);
             if (buffer.length > MAX_BUFFER) buffer.shift();
-            if (candle.closed) this.emit('bar', symbol, candle);
+            if (candle.closed) this.emitBar(symbol, candle);
           }
         }
         this.lastMessageAt = Date.now();
@@ -230,7 +275,7 @@ export class KlineStream extends EventEmitter {
         buffer.push(candle);
         if (buffer.length > MAX_BUFFER) buffer.shift();
       }
-      if (candle.closed) this.emit('bar', symbol, candle);
+      if (candle.closed) this.emitBar(symbol, candle);
     }
   }
 }
