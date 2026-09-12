@@ -430,3 +430,47 @@ zero, minus fees. The engineering is sound — the missed-bar and clock-drift
 defects found the same day were real and are fixed — and none of that makes the
 strategy profitable. Those are separate questions and only one of them is
 answered.
+
+## Breakout, and fading it (2026-09-12)
+
+Two more families, on the cached 6h and 12h candles across ~580 and ~490
+symbols. Both mechanisms are genuinely different from the moving-average cross
+tested earlier — a cross is a smoother disagreeing with itself and is late by
+construction; a breakout is price itself making a new extreme.
+
+**Following breakouts loses, significantly.** Nineteen of twenty configurations
+are negative in the recent half, several clearing the corrected threshold in the
+losing direction: Donchian 40 on 6h at clustered t −4.22, the squeeze variant at
+mean R −0.198 with naive t −8.72. This is a finding rather than a null: over
+this sample new extremes revert, and anything chasing them is fed.
+
+**Fading them does not therefore win.** The clustered statistic flips positive,
+peaking at 3.08 (12h, Donchian 20, 3R target, both halves positive) against a
+corrected bar of 3.2 — and that row's mean R is +0.011. A hundredth of a risk
+unit per trade is smaller than the slippage the backtest does not model.
+
+Two readings worth keeping, because both are ways to be fooled:
+
+**Mean R negative while clustered t is positive.** `Fade 40, 2R` on 6h: mean R
+−0.030, clustered t +2.64. The average trade loses while the average day wins,
+which happens when losing days carry many simultaneous trades and winning days
+carry few. Clustering is the right correction for correlation, but it answers
+"was this day good" and the bot holds one position at a time — it samples
+trades, not days. For this bot, per-trade mean R is what becomes money, and it
+is zero or negative in every row of both studies.
+
+**Naive 4.10, clustered 0.01.** `Fade 20 + squeeze, 2R` on 12h. That single row
+is the entire methodological point of this file: the number a standard backtest
+reports, next to the number that survives the observation that crypto moves
+together.
+
+## Standing conclusion
+
+Seven families now: momentum, reversal, funding carry, low volatility, EMA-cross
+trend, breakout, fade-the-breakout. Across timeframes from 15m to daily, on the
+full Bybit universe, with honest costs and a corrected threshold. Nothing has an
+exploitable edge, and the live configuration measures at clustered t −0.13.
+
+The bot is not the problem and improving it further will not fix this. It
+executes correctly, sizes correctly, and stops out correctly; it has nothing
+worth executing.
