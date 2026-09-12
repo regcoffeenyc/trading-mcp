@@ -16,6 +16,17 @@ export type Network = keyof typeof HOSTS;
 
 const TIMEOUT_MS = 15_000;
 
+/**
+ * How long a clock reading stays trustworthy.
+ *
+ * A host whose time service is stopped drifts steadily — five seconds an hour
+ * on the machine this was found on, which is the whole recv window. Syncing
+ * once at startup is therefore only correct for the first hour. Re-reading
+ * server time costs one unauthenticated GET, so do it often enough that drift
+ * never reaches the window rather than waiting to be rejected.
+ */
+const CLOCK_RESYNC_AFTER_MS = 5 * 60_000;
+
 /** Bybit ret codes that mean "the request was fine, the state just isn't there". */
 const BENIGN_CODES = new Set([
   110043, // leverage not modified
@@ -45,6 +56,8 @@ export class BybitRest implements MarketData {
   private readonly recvWindow: string;
   /** Bybit rejects requests whose timestamp drifts from server time by > recvWindow. */
   private clockOffsetMs = 0;
+  private clockSyncedAt = 0;
+  private clockSyncInFlight: Promise<number> | null = null;
 
   constructor(opts: RestOptions) {
     this.host = opts.host ?? HOSTS[opts.network];
@@ -88,6 +101,7 @@ export class BybitRest implements MarketData {
           if (!this.key || !this.secret) {
             throw new Error(`${path} requires API credentials (BYBIT_API_KEY / BYBIT_API_SECRET).`);
           }
+          await this.ensureClockFresh();
           const timestamp = String(Date.now() + this.clockOffsetMs);
           headers['X-BAPI-API-KEY'] = this.key;
           headers['X-BAPI-TIMESTAMP'] = timestamp;
@@ -133,6 +147,19 @@ export class BybitRest implements MarketData {
     });
   }
 
+  /**
+   * Re-reads server time if the last reading has gone stale.
+   *
+   * Only signed requests need this, and syncClock is unauthenticated, so there
+   * is no recursion. Concurrent callers share one in-flight read, and a failed
+   * read keeps the previous offset: a stale offset still beats no request.
+   */
+  private async ensureClockFresh(): Promise<void> {
+    if (Date.now() - this.clockSyncedAt < CLOCK_RESYNC_AFTER_MS) return;
+    this.clockSyncInFlight ??= this.syncClock().finally(() => { this.clockSyncInFlight = null; });
+    await this.clockSyncInFlight.catch(() => undefined);
+  }
+
   /** Aligns our clock with Bybit's so signed requests are not rejected as expired. */
   async syncClock(): Promise<number> {
     const before = Date.now();
@@ -140,6 +167,7 @@ export class BybitRest implements MarketData {
     const rtt = Date.now() - before;
     const serverMs = Number(res.timeNano) / 1e6;
     this.clockOffsetMs = Math.round(serverMs + rtt / 2 - Date.now());
+    this.clockSyncedAt = Date.now();
     if (Math.abs(this.clockOffsetMs) > 1000) {
       log.warn('Local clock drifts from Bybit', { offsetMs: this.clockOffsetMs });
     }
