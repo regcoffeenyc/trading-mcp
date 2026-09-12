@@ -1,5 +1,7 @@
 import { Engine } from './engine.js';
+import path from 'node:path';
 import { loadEnvFile } from './env.js';
+import { InstanceLock } from './lock.js';
 import { loadConfig, riskWarnings } from './config.js';
 import { configureLogger, log } from './logger.js';
 import { usd } from './util.js';
@@ -20,6 +22,19 @@ async function main(): Promise<void> {
     await new Promise((r) => setTimeout(r, 10_000));
   }
 
+  // Refuse to start alongside another instance: two bots on one account
+  // double every position and halve every risk limit in effect.
+  const lock = new InstanceLock(path.join(path.dirname(cfg.stateFile), 'bot.lock'));
+  const owner = lock.tryAcquire();
+  if (owner !== null) {
+    log.error(
+      `Another bot is already running on this account (PID ${owner}). Refusing to start a second one — ` +
+      'two instances would open duplicate positions and both would size against the same limits. ' +
+      `Stop it first, or delete the lock at ${path.join(path.dirname(cfg.stateFile), 'bot.lock')} if it is stale.`,
+    );
+    process.exit(1);
+  }
+
   const engine = new Engine(cfg);
 
   let shuttingDown = false;
@@ -30,6 +45,7 @@ async function main(): Promise<void> {
     // Open positions keep their exchange-side stop and target, so leaving them
     // is safe; closing them on every restart would churn fees instead.
     await engine.stop();
+    lock.release();
     process.exit(0);
   };
 
