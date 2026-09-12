@@ -364,6 +364,23 @@ export class Engine {
   }
 
   private async considerEntry(symbol: string): Promise<void> {
+    // Never act on a stale book. If the feed stalled, the newest "closed" bar
+    // can be hours old and the strategy would be reading history as if it were
+    // now. Allow two intervals of slack for a late close.
+    const intervalMs = Number(this.cfg.interval) * 60_000;
+    const newest = this.stream.closedCandles(symbol).at(-1);
+    if (this.cfg.maxBarAgeIntervals > 0 && Number.isFinite(intervalMs) && intervalMs > 0 && newest) {
+      const age = Date.now() - newest.time;
+      if (age > intervalMs * this.cfg.maxBarAgeIntervals) {
+        log.warn('Skipping entry, candle data is stale', {
+          symbol,
+          newestBar: new Date(newest.time).toISOString(),
+          ageMinutes: Math.round(age / 60_000),
+        });
+        return;
+      }
+    }
+
     const candles = this.stream.closedCandles(symbol);
     if (candles.length < this.strategy.warmupBars) {
       log.debug('Warming up', { symbol, have: candles.length, need: this.strategy.warmupBars });
@@ -405,6 +422,22 @@ export class Engine {
 
     if (!sizing.ok) {
       log.info('Signal skipped, cannot size safely', { symbol, reason: sizing.reason });
+      return;
+    }
+
+    // A stop that sits beyond liquidation is not a stop.
+    const liq = this.risk.stopIsInsideLiquidation({
+      entryPrice: ticker.lastPrice,
+      stopPrice: signal.stopLoss,
+      leverage: Math.min(this.cfg.leverage, inst.maxLeverage),
+    });
+    if (!liq.safe) {
+      log.warn('Skipping entry, stop sits too close to liquidation', {
+        symbol,
+        stopDistancePct: liq.stopDistancePct.toFixed(2),
+        liquidationDistancePct: liq.liquidationDistancePct.toFixed(2),
+        leverage: this.cfg.leverage,
+      });
       return;
     }
 

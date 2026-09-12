@@ -41,6 +41,8 @@ async function runReplay(overrides: Record<string, string>, bars: number) {
     // This replay exercises the market path; the post-only path has its own
     // tests against a mock that can answer order-status queries.
     ENTRY_STYLE: 'market',
+    // Replayed bars are historical, so wall-clock staleness does not apply.
+    MAX_BAR_AGE_INTERVALS: '0',
     ...overrides,
   });
 

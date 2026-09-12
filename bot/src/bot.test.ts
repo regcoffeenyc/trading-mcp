@@ -29,7 +29,7 @@ function baseConfig(overrides: Partial<Config> = {}): Config {
     stopAtrMult: 1.8, takeProfitR: 2, breakevenAtR: 1, trailAtrMult: 0,
     maxSpreadPct: 0.06, minAtrPct: 0.15, maxHoldMinutes: 720,
     takerFeeRate: 0.00055,
-    entryStyle: 'limit', entryTimeoutSeconds: 120, entryOffsetTicks: 1, slippagePct: 0.02,
+    entryStyle: 'limit', entryTimeoutSeconds: 120, entryOffsetTicks: 1, maxBarAgeIntervals: 3, slippagePct: 0.02,
     tickMs: 15_000, stateFile: './data/test.json', logLevel: 'error', healthPort: 0,
     ...overrides,
   };
@@ -375,4 +375,40 @@ test('the daily baseline is rebased when an empty account is funded', () => {
   const verdict = risk.checkGuards(state, 55);
   assert.equal(verdict.allowed, false, 'after rebasing, the stop fires at the limit');
   assert.match(verdict.reason, /Daily loss/);
+});
+
+// ------------------------------------------------ liquidation vs stop distance
+
+test('a stop comfortably inside liquidation is accepted', () => {
+  const risk = new RiskManager(baseConfig());
+  // 5x leverage: liquidation about 19.5% away. A 3% stop is well clear.
+  const check = risk.stopIsInsideLiquidation({ entryPrice: 100, stopPrice: 97, leverage: 5 });
+  assert.equal(check.safe, true);
+  assert.ok(Math.abs(check.stopDistancePct - 3) < 1e-9);
+  assert.ok(check.liquidationDistancePct > 19 && check.liquidationDistancePct < 20);
+});
+
+test('a stop beyond liquidation is refused', () => {
+  const risk = new RiskManager(baseConfig());
+  // 20x leverage: liquidation about 4.5% away. A 6% stop would never be reached
+  // — the exchange closes the position first and takes the whole margin.
+  const check = risk.stopIsInsideLiquidation({ entryPrice: 100, stopPrice: 94, leverage: 20 });
+  assert.equal(check.safe, false, 'a stop the exchange would pre-empt is not protection');
+});
+
+test('a stop just under liquidation is still refused, for the buffer', () => {
+  const risk = new RiskManager(baseConfig());
+  // 10x: liquidation about 9.5%. A 9% stop is nominally inside but has no margin
+  // for a maintenance-rate step or a gap in the mark price.
+  const check = risk.stopIsInsideLiquidation({ entryPrice: 100, stopPrice: 91, leverage: 10 });
+  assert.equal(check.safe, false);
+});
+
+test('higher leverage shrinks the usable stop distance', () => {
+  const risk = new RiskManager(baseConfig());
+  const at3 = risk.stopIsInsideLiquidation({ entryPrice: 100, stopPrice: 95, leverage: 3 });
+  const at25 = risk.stopIsInsideLiquidation({ entryPrice: 100, stopPrice: 95, leverage: 25 });
+  assert.equal(at3.safe, true, 'the same stop is fine at low leverage');
+  assert.equal(at25.safe, false, 'and unusable at high leverage');
+  assert.ok(at3.liquidationDistancePct > at25.liquidationDistancePct);
 });

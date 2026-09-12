@@ -198,6 +198,37 @@ export class RiskManager {
     return { ok: true, qty, notional, riskUsd: qty * stopDistance };
   }
 
+  /**
+   * Is the stop closer than liquidation?
+   *
+   * A stop only protects you if price reaches it before the exchange force-closes
+   * the position. At high leverage the liquidation price can sit inside the stop
+   * distance, in which case the stop is decorative and the real loss is the whole
+   * margin. Bybit's maintenance margin is roughly 0.5% on major perps; a margin
+   * of safety is applied on top because maintenance requirements rise with
+   * position size and the mark price can gap.
+   */
+  stopIsInsideLiquidation(args: {
+    entryPrice: number;
+    stopPrice: number;
+    leverage: number;
+    maintenanceMarginRate?: number;
+  }): { safe: boolean; stopDistancePct: number; liquidationDistancePct: number } {
+    const { entryPrice, stopPrice, leverage } = args;
+    const mmr = args.maintenanceMarginRate ?? 0.005;
+    const stopDistancePct = (Math.abs(entryPrice - stopPrice) / entryPrice) * 100;
+    // Liquidation sits roughly where the initial margin is exhausted down to the
+    // maintenance requirement: (1/leverage - mmr) of the entry price.
+    const liquidationDistancePct = Math.max(0, (1 / leverage - mmr) * 100);
+    // Require a 25% buffer: a stop at 90% of the liquidation distance is not
+    // meaningfully protection.
+    return {
+      safe: stopDistancePct < liquidationDistancePct * 0.75,
+      stopDistancePct,
+      liquidationDistancePct,
+    };
+  }
+
   /** Called after every close so streak-based cooldowns stay current. */
   recordOutcome(state: BotState, pnl: number, now = Date.now()): void {
     state.tradesToday += 1;

@@ -51,6 +51,12 @@ export interface Config {
   entryStyle: 'limit' | 'market';
   entryTimeoutSeconds: number;
   entryOffsetTicks: number;
+  /**
+   * Refuse to trade when the newest closed bar is older than this many
+   * intervals. 0 disables the check, which is what replays and backtests need
+   * since their bars have no relationship to wall-clock time.
+   */
+  maxBarAgeIntervals: number;
   slippagePct: number;
 
   /** Risk-tick interval in ms. Lowered in tests; leave at the default in production. */
@@ -139,6 +145,7 @@ export function loadConfig(): Config {
     entryStyle: oneOf('ENTRY_STYLE', ['limit', 'market'] as const, 'limit'),
     entryTimeoutSeconds: num('ENTRY_TIMEOUT_SECONDS', 120),
     entryOffsetTicks: num('ENTRY_OFFSET_TICKS', 1),
+    maxBarAgeIntervals: num('MAX_BAR_AGE_INTERVALS', 3),
     slippagePct: num('SLIPPAGE_PCT', 0.02),
 
     tickMs: num('TICK_MS', 15_000),
