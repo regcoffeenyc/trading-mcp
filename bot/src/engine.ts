@@ -61,7 +61,11 @@ export class Engine {
     // Validation guarantees a non-Bybit source is paper-only.
     this.marketData = cfg.dataSource === 'okx' ? new OkxMarketData() : this.rest;
     this.broker = cfg.mode === 'live'
-      ? new LiveBroker(this.rest)
+      ? new LiveBroker(this.rest, {
+          style: cfg.entryStyle,
+          timeoutSeconds: cfg.entryTimeoutSeconds,
+          offsetTicks: cfg.entryOffsetTicks,
+        })
       : new PaperBroker(this.marketData, {
           startingEquity: cfg.startingEquity,
           takerFeeRate: cfg.takerFeeRate,
@@ -424,7 +428,12 @@ export class Engine {
       reason: signal.reason,
     });
 
-    await this.broker.open({ symbol, side: signal.side, qty, stopLoss, takeProfit });
+    const opened = await this.broker.open({ symbol, side: signal.side, qty, stopLoss, takeProfit });
+    if (!opened) {
+      // A post-only entry that never filled is a missed trade, not an open one.
+      log.info('Entry did not fill, no position recorded', { symbol, side: signal.side });
+      return;
+    }
 
     this.state.positions[symbol] = {
       symbol,

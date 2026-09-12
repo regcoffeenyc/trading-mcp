@@ -336,6 +336,50 @@ export class BybitRest implements MarketData {
 
   // ------------------------------------------------------------------ orders
 
+  /**
+   * Post-only limit order with server-side SL/TP attached.
+   *
+   * PostOnly is rejected outright rather than filled if the price would cross
+   * the spread, which is what guarantees the maker fee (0.02% against 0.055%
+   * taker). The cost is that it may simply not fill — an unfilled entry is a
+   * missed trade, never a worse one.
+   */
+  async placePostOnlyLimit(req: OrderRequest & { price: string }): Promise<OrderResult> {
+    const body: Record<string, unknown> = {
+      category: 'linear',
+      symbol: req.symbol,
+      side: req.side,
+      orderType: 'Limit',
+      qty: req.qty,
+      price: req.price,
+      timeInForce: 'PostOnly',
+      positionIdx: 0,
+    };
+    if (req.orderLinkId) body.orderLinkId = req.orderLinkId;
+    if (req.stopLoss) { body.stopLoss = req.stopLoss; body.slTriggerBy = 'MarkPrice'; }
+    if (req.takeProfit) { body.takeProfit = req.takeProfit; body.tpTriggerBy = 'MarkPrice'; }
+    if (req.stopLoss || req.takeProfit) body.tpslMode = 'Full';
+    return this.request<OrderResult>('POST', '/v5/order/create', body, true);
+  }
+
+  async cancelOrder(symbol: string, orderId: string): Promise<void> {
+    await this.request('POST', '/v5/order/cancel', { category: 'linear', symbol, orderId }, true);
+  }
+
+  /** Status of a single order: New, PartiallyFilled, Filled, Cancelled, Rejected. */
+  async orderStatus(symbol: string, orderId: string): Promise<{ status: string; filledQty: number; avgPrice: number }> {
+    const res = await this.request<{ list: any[] }>(
+      'GET', '/v5/order/realtime', { category: 'linear', symbol, orderId }, true,
+    );
+    const o = res.list?.[0];
+    if (!o) return { status: 'Unknown', filledQty: 0, avgPrice: 0 };
+    return {
+      status: o.orderStatus,
+      filledQty: Number(o.cumExecQty ?? 0),
+      avgPrice: Number(o.avgPrice ?? 0),
+    };
+  }
+
   /** Market order with server-side SL/TP attached at entry. */
   async placeMarketOrder(req: OrderRequest): Promise<OrderResult> {
     const body: Record<string, unknown> = {

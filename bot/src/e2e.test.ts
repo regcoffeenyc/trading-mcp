@@ -38,6 +38,9 @@ async function runReplay(overrides: Record<string, string>, bars: number) {
     STARTING_EQUITY_USD: '50', RISK_PER_TRADE_PCT: '3', MAX_DAILY_LOSS_USD: '15',
     EQUITY_FLOOR_USD: '20', MAX_TRADES_PER_DAY: '6', HEALTH_PORT: '0',
     TICK_MS: '250', STATE_FILE: stateFile, LOG_LEVEL: 'error',
+    // This replay exercises the market path; the post-only path has its own
+    // tests against a mock that can answer order-status queries.
+    ENTRY_STYLE: 'market',
     ...overrides,
   });
 

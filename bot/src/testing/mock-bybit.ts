@@ -39,6 +39,10 @@ export class MockBybit {
   readonly tradingStops: Array<Record<string, unknown>> = [];
   /** Set to a retCode to make the next order attempt fail, exercising error paths. */
   failNextOrderWith: number | null = null;
+  /** Status returned for resting limit orders: drives the post-only fill path. */
+  limitOrderStatus: 'New' | 'Filled' | 'Cancelled' | 'Rejected' = 'Filled';
+  limitFilledQty = 0;
+  readonly cancelled: string[] = [];
   signatureFailures = 0;
 
   constructor(private readonly opts: MockOptions) {
@@ -155,11 +159,37 @@ export class MockBybit {
           this.failNextOrderWith = null;
           return send({}, code, 'simulated rejection');
         }
-        const order = JSON.parse(body) as Record<string, string>;
+        const order = JSON.parse(body) as Record<string, any>;
+        const orderId = `mock-${this.orders.length + 1}`;
+        order.__id = orderId;
         this.orders.push(order);
-        this.applyOrder(order);
-        return send({ orderId: `mock-${this.orders.length}`, orderLinkId: order.orderLinkId ?? '' });
+        // A resting limit order only becomes a position once it fills.
+        if (order.orderType !== 'Limit' || this.limitOrderStatus === 'Filled') {
+          this.applyOrder(order as Record<string, string>);
+        }
+        return send({ orderId, orderLinkId: order.orderLinkId ?? '' });
       }
+
+      case '/v5/order/realtime': {
+        const orderId = url.searchParams.get('orderId') ?? '';
+        const order = this.orders.find((o) => o.__id === orderId);
+        if (!order) return send({ list: [] });
+        const filled = this.limitOrderStatus === 'Filled'
+          ? Number(order.qty)
+          : this.limitFilledQty;
+        return send({
+          list: [{
+            orderId,
+            orderStatus: this.limitOrderStatus,
+            cumExecQty: String(filled),
+            avgPrice: String(this.price),
+          }],
+        });
+      }
+
+      case '/v5/order/cancel':
+        this.cancelled.push(JSON.parse(body).orderId);
+        return send({});
 
       case '/v5/order/cancel-all':
         return send({ list: [] });

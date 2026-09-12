@@ -28,7 +28,8 @@ function baseConfig(overrides: Partial<Config> = {}): Config {
     maxConsecutiveLosses: 3, cooldownMinutes: 60, dayResetHourUtc: 0, flattenOnDailyStop: true,
     stopAtrMult: 1.8, takeProfitR: 2, breakevenAtR: 1, trailAtrMult: 0,
     maxSpreadPct: 0.06, minAtrPct: 0.15, maxHoldMinutes: 720,
-    takerFeeRate: 0.00055, slippagePct: 0.02,
+    takerFeeRate: 0.00055,
+    entryStyle: 'limit', entryTimeoutSeconds: 120, entryOffsetTicks: 1, slippagePct: 0.02,
     tickMs: 15_000, stateFile: './data/test.json', logLevel: 'error', healthPort: 0,
     ...overrides,
   };

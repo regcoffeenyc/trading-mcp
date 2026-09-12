@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { BybitRest } from './bybit/rest.js';
 import { LiveBroker } from './broker/live.js';
+import type { EntryExecution } from './broker/types.js';
+
+/** Existing tests exercise the market path; the limit path is tested separately. */
+const MARKET_ENTRY: EntryExecution = { style: 'market', timeoutSeconds: 30, offsetTicks: 1 };
 import { MockBybit } from './testing/mock-bybit.js';
 import { configureLogger } from './logger.js';
 
@@ -71,7 +75,7 @@ test('a non-zero retCode surfaces as an error rather than silent success', async
 
 test('entry orders carry the stop and target to the exchange', async () => {
   mock.positions = [];
-  const broker = new LiveBroker(rest);
+  const broker = new LiveBroker(rest, MARKET_ENTRY);
   await broker.init(['BTCUSDT'], 5);
   await broker.open({ symbol: 'BTCUSDT', side: 'Buy', qty: '0.010', stopLoss: '98.00', takeProfit: '104.00' });
 
@@ -88,7 +92,7 @@ test('entry orders carry the stop and target to the exchange', async () => {
 test('a closed position is detected and its realised P&L read from the ledger', async () => {
   mock.positions = [];
   mock.orders.length = 0;
-  const broker = new LiveBroker(rest);
+  const broker = new LiveBroker(rest, MARKET_ENTRY);
   await broker.init(['BTCUSDT'], 5);
   await broker.open({ symbol: 'BTCUSDT', side: 'Buy', qty: '0.010', stopLoss: '98.00', takeProfit: '104.00' });
   assert.deepEqual(await broker.pollClosures(), [], 'an open position is not a closure');
@@ -111,7 +115,7 @@ test('a closure waits for the ledger rather than booking a stop-out as break-eve
   mock.positions = [];
   mock.orders.length = 0;
   mock.closedPnl = [];
-  const broker = new LiveBroker(rest);
+  const broker = new LiveBroker(rest, MARKET_ENTRY);
   await broker.init(['BTCUSDT'], 5);
   await broker.open({ symbol: 'BTCUSDT', side: 'Buy', qty: '0.010', stopLoss: '98.00', takeProfit: '104.00' });
 
@@ -134,7 +138,7 @@ test('a closure is eventually booked even if the ledger never reports it', async
   mock.positions = [];
   mock.orders.length = 0;
   mock.closedPnl = [];
-  const broker = new LiveBroker(rest);
+  const broker = new LiveBroker(rest, MARKET_ENTRY);
   await broker.init(['BTCUSDT'], 5);
   await broker.open({ symbol: 'BTCUSDT', side: 'Buy', qty: '0.010', stopLoss: '98.00', takeProfit: '104.00' });
   mock.positions = [];
@@ -153,7 +157,7 @@ test('an existing position is adopted on restart instead of being duplicated', a
     symbol: 'ETHUSDT', side: 'Sell', size: '0.05', avgPrice: '100', markPrice: '99',
     unrealisedPnl: '0.05', leverage: '5', stopLoss: '102', takeProfit: '96', createdTime: String(Date.now()),
   }];
-  const broker = new LiveBroker(rest);
+  const broker = new LiveBroker(rest, MARKET_ENTRY);
   await broker.init(['ETHUSDT'], 5);
   const positions = await broker.positions();
   assert.equal(positions.length, 1);
@@ -168,7 +172,7 @@ test('closing a position sends a reduce-only order on the opposite side', async 
     symbol: 'BTCUSDT', side: 'Buy', size: '0.010', avgPrice: '100', markPrice: '100',
     unrealisedPnl: '0', leverage: '5', stopLoss: '98', takeProfit: '104', createdTime: String(Date.now()),
   }];
-  const broker = new LiveBroker(rest);
+  const broker = new LiveBroker(rest, MARKET_ENTRY);
   await broker.close('BTCUSDT', 'Buy', '0.010', 'daily-stop');
   const order = mock.orders.at(-1)!;
   assert.equal(order.side, 'Sell');
@@ -178,7 +182,7 @@ test('closing a position sends a reduce-only order on the opposite side', async 
 
 test('moving the stop hits the trading-stop endpoint with a mark-price trigger', async () => {
   mock.tradingStops.length = 0;
-  const broker = new LiveBroker(rest);
+  const broker = new LiveBroker(rest, MARKET_ENTRY);
   await broker.moveStop('BTCUSDT', '100.50');
   const stop = mock.tradingStops.at(-1)!;
   assert.equal(stop.symbol, 'BTCUSDT');
@@ -189,4 +193,92 @@ test('moving the stop hits the trading-stop endpoint with a mark-price trigger',
 test('the clock offset is derived from server time', async () => {
   const offset = await rest.syncClock();
   assert.ok(Math.abs(offset) < 5000, `unexpected clock offset ${offset}`);
+});
+
+// ------------------------------------------------------- post-only entries
+
+const LIMIT_ENTRY: EntryExecution = { style: 'limit', timeoutSeconds: 8, offsetTicks: 1 };
+
+test('a post-only entry rests behind the touch and pays the maker fee', async () => {
+  mock.positions = [];
+  mock.orders.length = 0;
+  mock.limitOrderStatus = 'Filled';
+
+  const broker = new LiveBroker(rest, LIMIT_ENTRY);
+  await broker.init(['BTCUSDT'], 5);
+  const opened = await broker.open({
+    symbol: 'BTCUSDT', side: 'Buy', qty: '0.010', stopLoss: '98.00', takeProfit: '104.00',
+  });
+
+  assert.equal(opened, true);
+  const order = mock.orders.at(-1)!;
+  assert.equal(order.orderType, 'Limit', 'must rest, not cross the spread');
+  assert.equal(order.timeInForce, 'PostOnly', 'PostOnly is what guarantees the maker fee');
+  // Bid is price * 0.9999 = 99.99; one tick (0.01) behind it.
+  assert.equal(Number(order.price) < 99.99, true, 'a buy must rest below the bid');
+  assert.equal(order.stopLoss, '98.00', 'protection still travels with the entry');
+  assert.equal(order.takeProfit, '104.00');
+});
+
+test('a short rests above the ask', async () => {
+  mock.positions = [];
+  mock.orders.length = 0;
+  mock.limitOrderStatus = 'Filled';
+
+  const broker = new LiveBroker(rest, LIMIT_ENTRY);
+  await broker.open({
+    symbol: 'BTCUSDT', side: 'Sell', qty: '0.010', stopLoss: '104.00', takeProfit: '98.00',
+  });
+  const order = mock.orders.at(-1)!;
+  assert.equal(Number(order.price) > 100.01, true, 'a sell must rest above the ask');
+});
+
+test('an unfilled post-only entry is cancelled and reported as no trade', async () => {
+  mock.positions = [];
+  mock.orders.length = 0;
+  mock.cancelled.length = 0;
+  mock.limitOrderStatus = 'New';   // rests, never fills
+  mock.limitFilledQty = 0;
+
+  const broker = new LiveBroker(rest, LIMIT_ENTRY);
+  const opened = await broker.open({
+    symbol: 'BTCUSDT', side: 'Buy', qty: '0.010', stopLoss: '98.00', takeProfit: '104.00',
+  });
+
+  assert.equal(opened, false, 'a missed fill must not look like an open position');
+  assert.equal(mock.cancelled.length, 1, 'the resting order must be cancelled, not left hanging');
+  assert.equal(mock.positions.length, 0, 'no position should exist');
+});
+
+test('a partially filled entry is kept rather than discarded', async () => {
+  mock.positions = [];
+  mock.orders.length = 0;
+  mock.cancelled.length = 0;
+  mock.limitOrderStatus = 'New';
+  mock.limitFilledQty = 0.004;   // part of the 0.010 traded
+
+  const broker = new LiveBroker(rest, LIMIT_ENTRY);
+  // The partial fill exists on the exchange, so the position must too.
+  mock.positions = [{
+    symbol: 'BTCUSDT', side: 'Buy', size: '0.004', avgPrice: '100', markPrice: '100',
+    unrealisedPnl: '0', leverage: '5', stopLoss: '98', takeProfit: '104', createdTime: String(Date.now()),
+  }];
+
+  const opened = await broker.open({
+    symbol: 'BTCUSDT', side: 'Buy', qty: '0.010', stopLoss: '98.00', takeProfit: '104.00',
+  });
+  assert.equal(opened, true, 'a partial fill is a real position and must be tracked');
+});
+
+test('a rejected post-only order is a skipped signal, not an error', async () => {
+  mock.positions = [];
+  mock.orders.length = 0;
+  mock.failNextOrderWith = 30208;   // PostOnly would have crossed the spread
+
+  const broker = new LiveBroker(rest, LIMIT_ENTRY);
+  const opened = await broker.open({
+    symbol: 'BTCUSDT', side: 'Buy', qty: '0.010', stopLoss: '98.00', takeProfit: '104.00',
+  });
+  assert.equal(opened, false, 'the bar is skipped, and nothing throws');
+  assert.equal(mock.positions.length, 0);
 });

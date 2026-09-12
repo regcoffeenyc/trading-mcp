@@ -1,7 +1,8 @@
 import { log } from '../logger.js';
+import { roundToStep, sleep } from '../util.js';
 import type { BybitRest } from '../bybit/rest.js';
 import type { Candle, Instrument, Position, Side, Ticker, WalletBalance } from '../bybit/types.js';
-import type { Broker, ClosedTrade, OpenRequest } from './types.js';
+import type { Broker, ClosedTrade, EntryExecution, OpenRequest } from './types.js';
 
 interface TrackedPosition {
   side: Side;
@@ -37,7 +38,7 @@ export class LiveBroker implements Broker {
   private tracked = new Map<string, TrackedPosition>();
   private readonly pending = new Map<string, PendingClosure>();
 
-  constructor(private readonly rest: BybitRest) {}
+  constructor(private readonly rest: BybitRest, private readonly entry: EntryExecution) {}
 
   async init(symbols: string[], leverage: number): Promise<void> {
     await this.rest.syncClock();
@@ -74,22 +75,17 @@ export class LiveBroker implements Broker {
   balance(): Promise<WalletBalance> { return this.rest.walletBalance(); }
   positions(): Promise<Position[]> { return this.rest.positions(); }
 
-  async open(req: OpenRequest): Promise<void> {
-    const res = await this.rest.placeMarketOrder({
-      symbol: req.symbol,
-      side: req.side,
-      qty: req.qty,
-      stopLoss: req.stopLoss,
-      takeProfit: req.takeProfit,
-      orderLinkId: `bot-${Date.now()}-${req.symbol}`,
-    });
-    log.info('Order submitted', { symbol: req.symbol, side: req.side, qty: req.qty, orderId: res.orderId });
+  async open(req: OpenRequest): Promise<boolean> {
+    const res = this.entry.style === 'limit'
+      ? await this.openWithLimit(req)
+      : await this.openWithMarket(req);
+    if (!res) return false;
 
-    // Confirm the fill from the position endpoint rather than assuming it.
+    // Confirm against the position endpoint rather than trusting the order.
     const filled = (await this.positions()).find((p) => p.symbol === req.symbol);
     if (!filled) {
-      log.warn('Order submitted but no position appeared yet', { symbol: req.symbol });
-      return;
+      log.warn('Order reported filled but no position appeared', { symbol: req.symbol });
+      return false;
     }
     this.tracked.set(req.symbol, {
       side: filled.side, qty: filled.size, entryPrice: filled.entryPrice, openedAt: Date.now(),
@@ -99,6 +95,87 @@ export class LiveBroker implements Broker {
       log.warn('Entry has no stop attached, setting it now', { symbol: req.symbol });
       await this.rest.setTradingStop(req.symbol, { stopLoss: req.stopLoss, takeProfit: req.takeProfit });
     }
+    return true;
+  }
+
+  private async openWithMarket(req: OpenRequest): Promise<boolean> {
+    const res = await this.rest.placeMarketOrder({
+      symbol: req.symbol,
+      side: req.side,
+      qty: req.qty,
+      stopLoss: req.stopLoss,
+      takeProfit: req.takeProfit,
+      orderLinkId: `bot-${Date.now()}-${req.symbol}`,
+    });
+    log.info('Market order submitted', { symbol: req.symbol, side: req.side, qty: req.qty, orderId: res.orderId });
+    return true;
+  }
+
+  /**
+   * Rests a post-only order just behind the touch and waits for it to fill.
+   *
+   * Maker execution costs 0.02% against 0.055% taker — on a round trip that is
+   * the difference between giving up 0.11% and 0.04%, which matters more than
+   * it sounds on a strategy whose edge is thin. The price is that the order may
+   * not fill at all, so this returns false and the signal is simply skipped
+   * rather than chased across the spread.
+   */
+  private async openWithLimit(req: OpenRequest): Promise<boolean> {
+    const inst = await this.instrument(req.symbol);
+    const ticker = await this.rest.ticker(req.symbol);
+    const tick = Number(inst.tickSize);
+
+    // Sit behind the touch: a buy below the bid, a sell above the ask. Posting
+    // at the touch risks PostOnly rejection if the book moves first.
+    const offset = tick * this.entry.offsetTicks;
+    const raw = req.side === 'Buy' ? ticker.bid - offset : ticker.ask + offset;
+    const price = roundToStep(raw, inst.tickSize);
+
+    let order: { orderId: string };
+    try {
+      order = await this.rest.placePostOnlyLimit({
+        symbol: req.symbol,
+        side: req.side,
+        qty: req.qty,
+        price,
+        stopLoss: req.stopLoss,
+        takeProfit: req.takeProfit,
+        orderLinkId: `bot-${Date.now()}-${req.symbol}`,
+      });
+    } catch (err) {
+      // 30208/110094: PostOnly would have crossed. The book moved; skip the bar.
+      log.info('Post-only entry rejected, skipping', { symbol: req.symbol, price, error: String(err) });
+      return false;
+    }
+
+    log.info('Post-only entry resting', {
+      symbol: req.symbol, side: req.side, qty: req.qty, price,
+      bid: ticker.bid, ask: ticker.ask, timeoutSeconds: this.entry.timeoutSeconds,
+    });
+
+    const deadline = Date.now() + this.entry.timeoutSeconds * 1000;
+    while (Date.now() < deadline) {
+      await sleep(2000);
+      const status = await this.rest.orderStatus(req.symbol, order.orderId).catch(() => null);
+      if (!status) continue;
+      if (status.status === 'Filled') {
+        log.info('Post-only entry filled', { symbol: req.symbol, price: status.avgPrice, qty: status.filledQty });
+        return true;
+      }
+      if (status.status === 'Cancelled' || status.status === 'Rejected') {
+        log.info('Post-only entry did not survive', { symbol: req.symbol, status: status.status });
+        return false;
+      }
+    }
+
+    // Out of time. Cancel, and keep a partial fill if one happened.
+    await this.rest.cancelOrder(req.symbol, order.orderId).catch(() => undefined);
+    const final = await this.rest.orderStatus(req.symbol, order.orderId).catch(() => null);
+    const partial = (final?.filledQty ?? 0) > 0;
+    log.info(partial ? 'Post-only entry partially filled, keeping it' : 'Post-only entry unfilled, cancelled', {
+      symbol: req.symbol, filledQty: final?.filledQty ?? 0,
+    });
+    return partial;
   }
 
   async close(symbol: string, side: Side, qty: string, reason: string): Promise<void> {

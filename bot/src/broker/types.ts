@@ -8,6 +8,15 @@ export interface OpenRequest {
   takeProfit: string;
 }
 
+export interface EntryExecution {
+  /** 'limit' rests as a maker order; 'market' crosses the spread immediately. */
+  style: 'limit' | 'market';
+  /** How long a resting entry is given to fill before it is cancelled. */
+  timeoutSeconds: number;
+  /** Ticks back from the touch, to stay behind the queue and keep PostOnly valid. */
+  offsetTicks: number;
+}
+
 export interface ClosedTrade {
   symbol: string;
   side: Side;
@@ -33,7 +42,12 @@ export interface Broker {
   ticker(symbol: string): Promise<Ticker>;
   balance(): Promise<WalletBalance>;
   positions(): Promise<Position[]>;
-  open(req: OpenRequest): Promise<void>;
+  /**
+   * Opens a position. Returns false when nothing was filled — a post-only
+   * entry that never traded is a missed opportunity, and the caller must not
+   * record a position that does not exist.
+   */
+  open(req: OpenRequest): Promise<boolean>;
   close(symbol: string, side: Side, qty: string, reason: string): Promise<void>;
   moveStop(symbol: string, stopLoss: string): Promise<void>;
   /**

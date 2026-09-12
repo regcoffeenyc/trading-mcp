@@ -87,7 +87,7 @@ export class PaperBroker implements Broker {
     }));
   }
 
-  async open(req: OpenRequest): Promise<void> {
+  async open(req: OpenRequest): Promise<boolean> {
     const ticker = await this.ticker(req.symbol);
     const slip = 1 + (req.side === 'Buy' ? 1 : -1) * (this.opts.slippagePct / 100);
     const fill = ticker.lastPrice * slip;
@@ -104,6 +104,7 @@ export class PaperBroker implements Broker {
       openedAt: Date.now(),
     });
     log.info('[paper] Opened', { symbol: req.symbol, side: req.side, qty, entry: fill.toFixed(4) });
+    return true;
   }
 
   async close(symbol: string, _side: Side, _qty: string, reason: string): Promise<void> {

@@ -47,6 +47,10 @@ export interface Config {
   minAtrPct: number;
   maxHoldMinutes: number;
   takerFeeRate: number;
+  /** 'limit' rests a post-only maker order; 'market' crosses the spread. */
+  entryStyle: 'limit' | 'market';
+  entryTimeoutSeconds: number;
+  entryOffsetTicks: number;
   slippagePct: number;
 
   /** Risk-tick interval in ms. Lowered in tests; leave at the default in production. */
@@ -132,6 +136,9 @@ export function loadConfig(): Config {
     minAtrPct: num('MIN_ATR_PCT', 0.15),
     maxHoldMinutes: num('MAX_HOLD_MINUTES', 720),
     takerFeeRate: num('TAKER_FEE_RATE', 0.00055),
+    entryStyle: oneOf('ENTRY_STYLE', ['limit', 'market'] as const, 'limit'),
+    entryTimeoutSeconds: num('ENTRY_TIMEOUT_SECONDS', 120),
+    entryOffsetTicks: num('ENTRY_OFFSET_TICKS', 1),
     slippagePct: num('SLIPPAGE_PCT', 0.02),
 
     tickMs: num('TICK_MS', 15_000),
@@ -164,6 +171,12 @@ export function validate(cfg: Config): void {
   if (cfg.equityFloorUsd < 0) errors.push('EQUITY_FLOOR_USD cannot be negative.');
   if (cfg.maxConcurrentPositions < 1) errors.push('MAX_CONCURRENT_POSITIONS must be at least 1.');
   if (cfg.stopAtrMult <= 0) errors.push('STOP_ATR_MULT must be positive.');
+  if (cfg.entryTimeoutSeconds < 5 || cfg.entryTimeoutSeconds > 3600) {
+    errors.push('ENTRY_TIMEOUT_SECONDS must be between 5 and 3600.');
+  }
+  if (cfg.entryOffsetTicks < 0 || cfg.entryOffsetTicks > 100) {
+    errors.push('ENTRY_OFFSET_TICKS must be between 0 and 100.');
+  }
   if (cfg.takeProfitR <= 0) errors.push('TAKE_PROFIT_R must be positive.');
   if (cfg.dayResetHourUtc < 0 || cfg.dayResetHourUtc > 23) errors.push('DAY_RESET_HOUR_UTC must be 0-23.');
   if (cfg.tickMs < 100 || cfg.tickMs > 300_000) errors.push('TICK_MS must be between 100 and 300000.');
