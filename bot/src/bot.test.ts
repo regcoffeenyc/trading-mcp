@@ -350,3 +350,28 @@ test('a funded account that drains to zero still halts permanently', () => {
   assert.equal(verdict.waitingForFunding, undefined);
   assert.equal(verdict.flatten, true);
 });
+
+test('the daily baseline is rebased when an empty account is funded', () => {
+  // Regression: the baseline is recorded at startup. If that happened while the
+  // account held nothing, a zero baseline makes the daily loss stop unreachable
+  // — the loss would have to exceed the deposit plus the limit to trigger.
+  const cfg = baseConfig({ maxDailyLossUsd: 15, equityFloorUsd: 20 });
+  const risk = new RiskManager(cfg);
+  const state = emptyState('2026-01-01', 0);
+
+  assert.equal(state.dayStartEquity, 0);
+  assert.equal(risk.dailyLoss(state, 70), -70, 'a zero baseline reads a deposit as profit');
+  assert.equal(
+    risk.checkGuards(state, 55).allowed, true,
+    'with a stale baseline, a $15 loss from $70 would not stop trading',
+  );
+
+  // What the engine does on the unfunded -> funded transition.
+  state.everFunded = true;
+  state.dayStartEquity = 70;
+
+  assert.equal(risk.dailyLoss(state, 55), 15);
+  const verdict = risk.checkGuards(state, 55);
+  assert.equal(verdict.allowed, false, 'after rebasing, the stop fires at the limit');
+  assert.match(verdict.reason, /Daily loss/);
+});

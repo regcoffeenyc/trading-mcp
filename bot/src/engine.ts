@@ -230,8 +230,22 @@ export class Engine {
     // latch the kill switch and refuse to trade the money it is waiting for.
     if (this.equity > this.cfg.equityFloorUsd && !this.state.everFunded) {
       this.state.everFunded = true;
-      log.info('Account funded, live trading armed', { equity: usd(this.equity) });
-      await this.notifier.send(`💰 Account funded: ${usd(this.equity)}. Trading is now armed.`);
+      // Rebase the day's baseline onto the deposit. It was recorded while the
+      // account was empty, and the daily loss stop measures against it — left
+      // at zero, a loss could never reach the limit and the stop would be
+      // silently inert for the rest of the day.
+      const staleBaseline = this.state.dayStartEquity;
+      this.state.dayStartEquity = this.equity;
+      log.info('Account funded, live trading armed', {
+        equity: usd(this.equity),
+        dayStartEquity: usd(this.equity),
+        rebasedFrom: usd(staleBaseline),
+      });
+      this.store.save(this.state);
+      await this.notifier.send(
+        `💰 Account funded: ${usd(this.equity)}. Trading is armed.\n` +
+        `Daily loss stop active at ${usd(this.cfg.maxDailyLossUsd)} below ${usd(this.equity)}.`,
+      );
     }
 
     const verdict = this.risk.checkGuards(this.state, this.equity);
