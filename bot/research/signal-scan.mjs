@@ -1,16 +1,29 @@
 // What is the live strategy actually seeing right now, across a wide symbol set?
 //
-// The bot trades three symbols on 12-hour bars, which is a very low signal rate.
-// This shows, per symbol, how close the shipped trend rules are to firing, so
-// the choice between "wait" and "widen the universe" is made on facts rather
-// than impatience.
+// On 12-hour bars the signal rate is low by construction. This shows, per
+// symbol, how close the shipped trend rules are to firing, so the choice
+// between "wait" and "widen the universe" is made on facts rather than
+// impatience.
 import { BybitRest } from '../dist/bybit/rest.js';
 import { createStrategy } from '../dist/strategy/index.js';
+import { loadEnvFile } from '../dist/env.js';
 import { adx, atr, closes, ema, rsi } from '../dist/indicators.js';
 
+loadEnvFile();
+
 const rest = new BybitRest({ network: 'mainnet', apiKey: '', apiSecret: '', recvWindow: '5000' });
-const INTERVAL = process.env.SCAN_INTERVAL ?? '720';
-const symbols = (process.env.SCAN_SYMBOLS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+// Default to what the bot itself is trading, so the scan answers "what is my
+// bot seeing" rather than whatever the last shell happened to export. An empty
+// list used to print a clean report of nothing, which reads exactly like a
+// genuine "no signals" result and is not one.
+const INTERVAL = process.env.SCAN_INTERVAL ?? process.env.INTERVAL ?? '720';
+const symbols = (process.env.SCAN_SYMBOLS ?? process.env.SYMBOLS ?? '')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+
+if (symbols.length === 0) {
+  console.error('No symbols to scan. Set SCAN_SYMBOLS, or run from the bot directory so .env supplies SYMBOLS.');
+  process.exit(1);
+}
 
 const strategy = createStrategy('trend');
 const rows = [];
