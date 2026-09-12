@@ -392,3 +392,41 @@ account has.
 The bot is sound and the harness now tells the truth quickly. What it does not
 have is something profitable to run, and no amount of further parameter search
 on this data will produce one.
+
+## The live configuration, measured (2026-09-12)
+
+Everything above tested candidate signals. This tests the rule the bot is
+actually running, at the interval it is actually running, so the answer is
+about this bot rather than about a family of ideas.
+
+Shipped rules unchanged — EMA 21/55, 200-EMA regime filter, 1.8 ATR stop, 2R
+target, maker fees both sides, a bar spanning stop and target read as the stop —
+across all 758 Bybit linear USDT perpetuals, 2000 bars each.
+
+| interval | trades | mean R | naive t | clustered t | 1st half | 2nd half |
+|---|---|---|---|---|---|---|
+| 360m (6h, 4/day)  | 7339 | +0.0208 | 1.25 | **−1.17** | +0.0506 (t 1.08) | −0.1624 (**t −3.91**) |
+| 720m (12h, 2/day) | 5156 | +0.0460 | 2.31 | **−0.13** | +0.0301 (t 0.56) | −0.0447 (t −0.98) |
+
+Two conclusions, and the second is the uncomfortable one.
+
+**A faster bar is worse, not merely no better.** Going to 6h raises the trade
+count by 42% and cuts mean R by more than half, and the second half of the
+sample is significantly negative at t −3.91. That is not an absence of evidence;
+it is evidence of a losing rule at that speed. The instinct that more trades
+means more profit is exactly backwards here — the extra trades are paid for at
+full price and returned at a worse expectancy.
+
+**The 12h configuration running live has no demonstrated edge.** Its naive t of
+2.31 is the number a backtest reports and it is an artefact: thirty symbols
+crossing on one morning is close to one observation, not thirty, and clustering
+by day collapses it to −0.13. Mean R stays positive, which is why this survived
+casual inspection for as long as it did; positive mean with a clustered t of
+zero is what a coin flip looks like.
+
+So the honest description of the live bot is a correctly built, correctly
+risk-limited execution of a rule whose expectation cannot be distinguished from
+zero, minus fees. The engineering is sound — the missed-bar and clock-drift
+defects found the same day were real and are fixed — and none of that makes the
+strategy profitable. Those are separate questions and only one of them is
+answered.
