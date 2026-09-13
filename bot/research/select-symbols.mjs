@@ -59,6 +59,25 @@ const rows = (json.result.list ?? [])
   .slice(0, MAX_SYMBOLS);
 
 const usd = (n) => '$' + (n / 1e6).toFixed(0) + 'M';
+
+// Which filter is doing the cutting? A list far shorter than expected is
+// usually a bad filter rather than a thin market, and the two are easy to
+// confuse when only the survivors are printed.
+{
+  const usdt = (json.result.list ?? []).filter((t) => t.symbol.endsWith('USDT'));
+  const liquid = usdt.filter((t) => Number(t.turnover24h) >= MIN_TURNOVER);
+  const cached = usdt.filter((t) => (history.get(t.symbol) ?? 0) >= MIN_BARS);
+  console.log('universe                ' + usdt.length + ' USDT perpetuals');
+  console.log('  clear turnover floor  ' + liquid.length);
+  console.log('  have enough history   ' + cached.length + '  (of ' + history.size + ' cached)');
+  console.log('  clear both            ' + liquid.filter((t) => (history.get(t.symbol) ?? 0) >= MIN_BARS).length);
+  const lost = liquid.filter((t) => (history.get(t.symbol) ?? 0) < MIN_BARS);
+  if (lost.length > 0) {
+    console.log('  liquid but short of history: ' +
+      lost.slice(0, 8).map((t) => t.symbol + '(' + (history.get(t.symbol) ?? 0) + ')').join(' '));
+  }
+  console.log('');
+}
 console.log(`${rows.length} symbols clear ${usd(MIN_TURNOVER)} turnover with ${MIN_BARS}+ bars of ${INTERVAL}m history\n`);
 console.log('  thinnest 5 that made the cut:');
 for (const r of rows.slice(-5)) {
