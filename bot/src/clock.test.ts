@@ -200,3 +200,72 @@ test('a rejected request corrects the clock without another network call', async
     `retry signed at ${signedAt[1]}, should land on server time ${SERVER_NOW}`,
   );
 });
+
+test('a slow round trip is not mistaken for a clock error', async () => {
+  // The clock here is perfectly correct; the network is not. A request spends
+  // five seconds each way, so Bybit sees it arrive outside the window and
+  // refuses it — with a server_timestamp five seconds after the one we signed.
+  //
+  // Reading that gap as clock error is what produced the live ping-pong:
+  // +9910ms applied, then -9908ms one second later, the offset swinging from
+  // -775 to +9133 and back. Correcting toward a stall signs the NEXT request
+  // into the future, where it is rejected in the other direction, forever.
+  //
+  // What is asserted is the offset, not the arrival gap. A correct clock still
+  // signs five seconds "behind" the server's clock on arrival — that is the
+  // transit, and no clock setting can remove it. The requirement is only that
+  // the bot does not conclude its clock is wrong and start lying about the time.
+  const HALF_TRIP = 5000;
+  const realNow = Date.now;
+  const realFetch = globalThis.fetch;
+
+  let local = SERVER_NOW;          // a correct clock: local === server
+  Date.now = () => local;
+
+  const appliedOffsets: number[] = [];
+  let rejected = false;
+
+  globalThis.fetch = (async (input: any, init: any = {}) => {
+    const url = String(input);
+    if (url.includes('/v5/market/time')) throw new TypeError('fetch failed');
+
+    const ts = Number((init.headers ?? {})['X-BAPI-TIMESTAMP']);
+    // What the client added to its own clock — the offset it believes in.
+    appliedOffsets.push(ts - local);
+
+    const arrivedAtServer = local + HALF_TRIP;
+    local = arrivedAtServer + HALF_TRIP;          // the reply gets back
+
+    if (!rejected) {
+      rejected = true;
+      return {
+        ok: true, status: 200,
+        async json() {
+          return {
+            retCode: 10002,
+            retMsg: `invalid request: req_timestamp[${ts}],` +
+              `server_timestamp[${arrivedAtServer}],recv_window[5000]`,
+            result: {},
+          };
+        },
+      };
+    }
+    return { ok: true, status: 200, async json() { return { retCode: 0, retMsg: 'OK', result: { list: [] } }; } };
+  }) as unknown as typeof fetch;
+
+  try {
+    const rest = new BybitRest({ network: 'mainnet', apiKey: 'k', apiSecret: 's', recvWindow: '5000' });
+    await rest.positions();
+  } finally {
+    Date.now = realNow;
+    globalThis.fetch = realFetch;
+  }
+
+  assert.equal(appliedOffsets.length, 2, 'one rejection, then a retry');
+  assert.equal(appliedOffsets[0], 0, 'started with a correct clock');
+  assert.ok(
+    Math.abs(appliedOffsets[1]!) < 500,
+    `the retry signed with a ${appliedOffsets[1]}ms offset on a clock that was right; ` +
+    'the stall was absorbed as clock error',
+  );
+});

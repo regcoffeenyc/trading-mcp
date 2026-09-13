@@ -109,6 +109,9 @@ export class BybitRest implements MarketData {
           headers['X-BAPI-SIGN'] = this.sign(payload, timestamp);
         }
 
+        // When the request left, so a 10002 can be read against the round trip
+        // rather than against the moment it was signed.
+        const sentAt = Date.now();
         const res = await fetch(url, {
           method,
           headers,
@@ -133,7 +136,7 @@ export class BybitRest implements MarketData {
             // outages that cause this drift are the same ones that would stop
             // the read going through — which is how an 8.5s skew survived a
             // five-minute resync policy on a flaky connection.
-            if (!this.adoptOffsetFrom(json.retMsg)) {
+            if (!this.adoptOffsetFrom(json.retMsg, sentAt)) {
               await this.syncClock().catch(() => undefined);
             }
             throw new RetryableError(msg);
@@ -167,16 +170,35 @@ export class BybitRest implements MarketData {
    * Returns false when the message is not in the expected shape, so the caller
    * falls back to reading the time endpoint rather than trusting a bad parse.
    */
-  private adoptOffsetFrom(retMsg: string): boolean {
-    const req = /req_timestamp\[(\d+)\]/.exec(retMsg);
+  private adoptOffsetFrom(retMsg: string, sentAt: number): boolean {
     const server = /server_timestamp\[(\d+)\]/.exec(retMsg);
-    if (!req || !server) return false;
-    const error = Number(server[1]) - Number(req[1]);
-    if (!Number.isFinite(error) || Math.abs(error) > 3_600_000) return false;
-    this.clockOffsetMs += error;
+    if (!server) return false;
+    const serverMs = Number(server[1]);
+    if (!Number.isFinite(serverMs)) return false;
+
+    // server_timestamp is a real instant somewhere between the request leaving
+    // and the answer arriving, so the exchange's clock now is about that plus
+    // half the round trip. Solve for the offset the same way syncClock does.
+    //
+    // The tempting shortcut — server_timestamp minus req_timestamp — is wrong,
+    // and wrong in a way that hurts. That difference is the clock error PLUS
+    // however long the request spent in transit, so a ten-second stall reads as
+    // a ten-second clock error, and correcting by it signs the next request ten
+    // seconds into the future. Observed live: +9910ms applied at 18:02:42 and
+    // -9908ms a second later, the offset ping-ponging between +9133 and -775.
+    const rtt = Date.now() - sentAt;
+    const offset = Math.round(serverMs + rtt / 2 - Date.now());
+    if (Math.abs(offset) > 3_600_000) return false;
+
+    // A correction smaller than the round trip is not distinguishable from
+    // measurement noise; taking it would chase latency rather than the clock.
+    const change = offset - this.clockOffsetMs;
+    if (Math.abs(change) < Math.max(rtt, 250)) return false;
+
+    this.clockOffsetMs = offset;
     this.clockSyncedAt = Date.now();
     log.warn('Clock corrected from a rejected request', {
-      correctedByMs: error, offsetMs: this.clockOffsetMs,
+      correctedByMs: change, offsetMs: offset, rttMs: rtt,
     });
     return true;
   }
