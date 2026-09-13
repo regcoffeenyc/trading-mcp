@@ -141,3 +141,62 @@ test('a clock drifting past the recv window never signs with a stale offset', as
   const worst = Math.max(...seen.map(Math.abs));
   assert.ok(worst < 1000, `worst signed error over three hours was ${worst}ms; the window is 5000ms`);
 });
+
+test('a rejected request corrects the clock without another network call', async () => {
+  const realNow = Date.now;
+  const realFetch = globalThis.fetch;
+
+  // The host clock is 8.5s behind the exchange — the skew actually observed —
+  // and the network is down, so reading /v5/market/time cannot save us.
+  const SKEW = -8500;
+  const now = () => SERVER_NOW + SKEW;
+  Date.now = now;
+
+  let timeReads = 0;
+  const signedAt: number[] = [];
+  let firstCall = true;
+
+  globalThis.fetch = (async (input: any, init: any = {}) => {
+    const url = String(input);
+    if (url.includes('/v5/market/time')) {
+      timeReads++;
+      throw new TypeError('fetch failed');
+    }
+    const ts = Number((init.headers ?? {})['X-BAPI-TIMESTAMP']);
+    signedAt.push(ts);
+    // Bybit refuses anything more than recvWindow from its own clock, and says
+    // so with both timestamps in the message.
+    if (Math.abs(ts - SERVER_NOW) > 5000) {
+      if (firstCall) {
+        firstCall = false;
+        return {
+          ok: true, status: 200,
+          async json() {
+            return {
+              retCode: 10002,
+              retMsg: `invalid request, please check your server timestamp or recv_window param: ` +
+                `req_timestamp[${ts}],server_timestamp[${SERVER_NOW}],recv_window[5000]`,
+              result: {},
+            };
+          },
+        };
+      }
+      throw new Error('signed out of window twice — the correction did not take');
+    }
+    return { ok: true, status: 200, async json() { return { retCode: 0, retMsg: 'OK', result: { list: [] } }; } };
+  }) as unknown as typeof fetch;
+
+  try {
+    const rest = new BybitRest({ network: 'mainnet', apiKey: 'k', apiSecret: 's', recvWindow: '5000' });
+    await rest.positions();
+  } finally {
+    Date.now = realNow;
+    globalThis.fetch = realFetch;
+  }
+
+  assert.equal(signedAt.length, 2, 'one rejection, then one accepted retry');
+  assert.ok(
+    Math.abs(signedAt[1]! - SERVER_NOW) < 5,
+    `retry signed at ${signedAt[1]}, should land on server time ${SERVER_NOW}`,
+  );
+});

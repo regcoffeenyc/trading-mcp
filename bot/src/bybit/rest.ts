@@ -126,9 +126,16 @@ export class BybitRest implements MarketData {
         const json = (await res.json()) as { retCode: number; retMsg: string; result: T };
         if (json.retCode !== 0 && !BENIGN_CODES.has(json.retCode)) {
           const msg = `Bybit ${json.retCode} on ${path}: ${json.retMsg}`;
-          // 10002 = request expired: our clock drifted. Resync and let retry re-sign.
+          // 10002 = request expired: our clock drifted.
           if (json.retCode === 10002) {
-            await this.syncClock().catch(() => undefined);
+            // The rejection carries Bybit's own clock, so correct from that
+            // first. Re-reading /v5/market/time needs the network, and the
+            // outages that cause this drift are the same ones that would stop
+            // the read going through — which is how an 8.5s skew survived a
+            // five-minute resync policy on a flaky connection.
+            if (!this.adoptOffsetFrom(json.retMsg)) {
+              await this.syncClock().catch(() => undefined);
+            }
             throw new RetryableError(msg);
           }
           if (json.retCode === 10006 || json.retCode === 10016) throw new RetryableError(msg);
@@ -145,6 +152,33 @@ export class BybitRest implements MarketData {
       baseMs: 400,
       onRetry: (err, attempt) => log.warn(`Retrying ${path} (attempt ${attempt})`, { error: String(err) }),
     });
+  }
+
+  /**
+   * Corrects the clock from a 10002 rejection.
+   *
+   * Bybit states both timestamps in the message it refuses with:
+   *   req_timestamp[1789252608184],server_timestamp[1789252616519]
+   * The difference is the error in the offset we just signed with, so adding it
+   * lands the next signature on the exchange's clock exactly, with no round
+   * trip. Parsing an error string is not elegant; being correct without needing
+   * the network is worth more than elegance here.
+   *
+   * Returns false when the message is not in the expected shape, so the caller
+   * falls back to reading the time endpoint rather than trusting a bad parse.
+   */
+  private adoptOffsetFrom(retMsg: string): boolean {
+    const req = /req_timestamp\[(\d+)\]/.exec(retMsg);
+    const server = /server_timestamp\[(\d+)\]/.exec(retMsg);
+    if (!req || !server) return false;
+    const error = Number(server[1]) - Number(req[1]);
+    if (!Number.isFinite(error) || Math.abs(error) > 3_600_000) return false;
+    this.clockOffsetMs += error;
+    this.clockSyncedAt = Date.now();
+    log.warn('Clock corrected from a rejected request', {
+      correctedByMs: error, offsetMs: this.clockOffsetMs,
+    });
+    return true;
   }
 
   /**
