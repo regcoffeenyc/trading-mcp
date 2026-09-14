@@ -13,14 +13,20 @@
 //              floor is 24h turnover, measured live rather than assumed.
 //   history    the strategy needs 200 bars for its regime filter plus room
 //              for the indicators, so a recent listing cannot be traded yet.
-//   continuous Bybit lists tokenized equity perpetuals - AAPLUSDT, SOXLUSDT,
-//              MRVLUSDT - alongside the crypto ones, and AAPLUSDT is currently
-//              the eighth most traded contract on the venue, so this is not a
-//              corner case. They stop trading at the closing bell and reopen
-//              somewhere else, and a stop sitting inside that gap is not a stop:
-//              price never touches it, it opens through it. The whole risk model
-//              assumes a market that always prints. Detected from the candles
-//              themselves rather than from a list of tickers to maintain.
+//   continuous a contract that stops trading and reopens elsewhere breaks the
+//              risk model: a stop inside the gap is never touched, price opens
+//              through it. Kept as a guard, though nothing currently trips it.
+//
+// A note on what this filter does NOT catch, because the guess was wrong and
+// the correction is worth more than the guess. Bybit lists tokenized equity
+// perpetuals - AAPLUSDT, NVDAUSDT, INTCUSDT, MSTRUSDT - and AAPLUSDT is
+// currently the eighth most traded contract on the venue. They look like they
+// must close with the underlying. Measured against the API, they do not: every
+// 12-hour bar carries real volume, INTCUSDT's thinnest recent bar at 3,577
+// against BTCUSDT's 5,542, with no missing bars anywhere in the history. They
+// trade around the clock like everything else here and are treated the same.
+// Excluding them on the theory alone would have been the hand-picking this file
+// exists to avoid.
 //
 // Deliberately NOT filtered on past performance. Picking symbols that did well
 // is the survivorship mistake this project already made once, when a hand-picked
