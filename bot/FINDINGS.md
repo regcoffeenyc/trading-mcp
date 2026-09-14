@@ -509,3 +509,59 @@ Two wrong diagnoses preceded the right one, both stated here because the
 sequence is the lesson: the skew was first attributed to clock drift (wrong: it
 oscillates), then to network latency (wrong: 0.2s round trips). Only measuring
 both separately identified a stepped clock.
+
+## Two more dead ends, and what they rule out (2026-09-14)
+
+**Funding is not a cost here.** The bot has never modelled funding, and holding
+perpetuals for a median of 144 hours on a venue that settles hourly looked like
+an obvious leak — especially since funding is charged on notional while the
+strategy measures in R, a conversion carrying a factor of entry/(1.8 ATR) that
+reaches ~28x on a 2%-ATR symbol.
+
+Measured over 2,787 trades inside the funding history: **+0.0021 R, t 0.42**.
+Slightly positive and indistinguishable from zero. Only 27% of trades paid;
+73% received. The reason is structural rather than lucky — crypto funding is
+usually positive, meaning longs pay shorts, and a trend rule is short in
+downtrends, so it collects. There is no cost here to recover, and any bot
+"optimisation" aimed at funding would be optimising a leak that does not exist.
+
+**The volatility band was an artefact.** The funding table, incidentally,
+showed mean R by ATR band: +0.065 below 2%, +0.074 at 2-4%, +0.021 at 4-7%,
++0.173 above 7% on 804 trades. With a mechanism to match — 2R is 3.6 ATR, so a
+quiet symbol must trend a long way to pay — it looked like the first real lever
+in the project.
+
+Chosen on the first half of the sample and applied once to the second:
+
+| | trades | mean R | naive t | clustered t |
+|---|---|---|---|---|
+| unfiltered, held out | 2578 | +0.1186 | 4.15 | **−0.98** |
+| ATR ≥ 8%, held out | 572 | +0.0942 | 1.56 | −0.59 |
+
+The filter's lift is **−0.024 R**: it made things worse on data it had not seen.
+Every threshold was negative in the first half and the whole sample was positive
+in the second, which is a regime flip rather than a property of volatile
+symbols. The held-out half unfiltered is the file's thesis in one row: naive
+t 4.15 against clustered t −0.98.
+
+## Nine families, and what that means
+
+momentum · reversal · funding carry · low volatility · EMA-cross trend across
+15m to daily · breakout (significantly negative) · fading breakouts · funding
+drag (not a cost) · volatility regime (artefact).
+
+The engineering is finished and good: it survives sleep, network loss, a stepped
+clock, reboots, and it now answers every health request. None of that is the
+constraint. Price-and-funding signals on crypto perpetuals, tested against the
+full universe with honest costs and a correction for the fact that crypto moves
+together, do not contain an exploitable edge at this scale.
+
+Further parameter search on this data is now actively harmful. Nine families in,
+the chance that the next apparently-good result is real has fallen far below the
+chance it is the tenth coin landing heads, and each additional look makes the
+next false positive more convincing rather than less.
+
+What is left has a structural rather than predictive mechanism — earning the
+spread as a passive market maker, or delta-neutral funding carry — and both need
+either infrastructure or capital this account does not have. That is a real
+answer, not a failure to find one.
