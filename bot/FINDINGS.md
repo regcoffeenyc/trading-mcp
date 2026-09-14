@@ -474,3 +474,38 @@ exploitable edge, and the live configuration measures at clustered t −0.13.
 The bot is not the problem and improving it further will not fix this. It
 executes correctly, sizes correctly, and stops out correctly; it has nothing
 worth executing.
+
+## Operating notes from the live run (2026-09-14)
+
+**Thirty symbols was the reason it never traded.** Four consecutive 12-hour
+closes produced no entry, which read as the strategy declining and was actually
+the strategy never being asked: entries need an EMA cross, and thirty of 765
+instruments is too small a sample to produce one reliably. Widened to the 87
+contracts clearing $5M daily turnover with enough history, at unchanged risk per
+trade, the very next scan showed one signal firing and four within a quarter-ATR
+of crossing. Nothing about the rule changed — only how much of the market it was
+allowed to look at.
+
+The turnover floor needed calibrating to the venue rather than to intuition.
+$50M captured 13 of 765 symbols: this market is extremely concentrated, with
+BTC at $1.75B and ETH at $1.64B but rank 100 already down at $5.4M. For a $70
+account placing $10–200 notional, a $5M book is thousands of times our size, so
+$5M is the honest floor and $50M was superstition.
+
+**The host clock is stepped, not drifting.** Reported errors of 9.0s, 9.9s,
+7.8s, 9.2s, 5.5s within five minutes cannot be drift, which moves one way and
+slowly. Nor is it latency: round trips to Bybit measure 208–346ms. The Windows
+Time service is stopped and nothing disciplines the clock, which is then
+corrected in jumps. Starting that service needs administrator rights the
+operator does not have.
+
+Mitigated by raising BYBIT_RECV_WINDOW from 5000 to 20000 — Bybit accepts up to
+at least 60000, tested. Rejections went from roughly one a minute to none. The
+client already recovered from each one by correcting and retrying, so nothing
+was lost, but at a bar close the rejected request is an order rather than a
+position read, and an order that needs a retry is an entry that can be missed.
+
+Two wrong diagnoses preceded the right one, both stated here because the
+sequence is the lesson: the skew was first attributed to clock drift (wrong: it
+oscillates), then to network latency (wrong: 0.2s round trips). Only measuring
+both separately identified a stepped clock.
