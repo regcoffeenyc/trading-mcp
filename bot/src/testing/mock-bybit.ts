@@ -39,6 +39,9 @@ export class MockBybit {
   readonly tradingStops: Array<Record<string, unknown>> = [];
   /** Set to a retCode to make the next order attempt fail, exercising error paths. */
   failNextOrderWith: number | null = null;
+  /** Contract class reported by instruments-info: '' for a crypto perpetual. */
+  symbolType = '';
+  fullName = '';
   /** Status returned for resting limit orders: drives the post-only fill path. */
   limitOrderStatus: 'New' | 'Filled' | 'Cancelled' | 'Rejected' = 'Filled';
   limitFilledQty = 0;
@@ -105,6 +108,10 @@ export class MockBybit {
             priceFilter: { tickSize: '0.01' },
             lotSizeFilter: { qtyStep: '0.001', minOrderQty: '0.001', maxOrderQty: '100', minNotionalValue: '5' },
             leverageFilter: { maxLeverage: '25' },
+            // Bybit sends these empty for a plain crypto perpetual and filled in
+            // for the classes it gates behind an agreement.
+            symbolType: this.symbolType,
+            fullName: this.fullName,
           }],
         });
 

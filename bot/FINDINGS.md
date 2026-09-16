@@ -565,3 +565,62 @@ What is left has a structural rather than predictive mechanism — earning the
 spread as a passive market maker, or delta-neutral funding carry — and both need
 either infrastructure or capital this account does not have. That is a real
 answer, not a failure to find one.
+
+## The first live signal, and why it was lost
+
+At 00:00 UTC on 2026-09-15 the bot produced the first real trade signal of its
+life — a short on NVDAUSDT, EMA21 under EMA55 below EMA200, ADX 24.7, RSI 30.9 —
+and Bybit refused the order 0.8 seconds later:
+
+    110126  You must sign the required agreement before trading this contract.
+
+Pre-flight had reported NVDAUSDT as PASS. Everything it checked was true: the
+price was live, the candles were there, the size fit the account. Nothing asked
+whether the account was permitted to trade the contract at all.
+
+There is no way to ask directly. Two probes were tried against the live account,
+both structurally unable to open a position:
+
+    set-leverage on NVDAUSDT      110043 leverage not modified   (same as BTCUSDT)
+    order/create, qty 0, price 1  110003 price is invalid        (same as BTCUSDT)
+    order/create, qty 0, valid px 10001 qty below minimum        (same as BTCUSDT)
+
+Price and quantity are both validated ahead of the agreement, so the gate is
+only reachable with an order that could fill. The permission cannot be tested
+without risking a real trade.
+
+What is available is the classification, in public instrument metadata:
+
+    symbolType   ''  for a plain crypto perpetual
+                 'stock' | 'commodity' | 'innovation'  otherwise
+
+Of the 87 configured symbols, 16 are not plain crypto: 5 stocks (AAPL, NVDA,
+INTC, MSTR, SNDK), 3 commodities (CL, XAU, XAG) and 8 innovation-zone tokens.
+Only the stock class has been proven blocked on this account; the others are
+unproven either way, and the pre-flight says so rather than guessing.
+
+So the bot does two things instead of one. Pre-flight names every gated contract
+and the remedy. And a 110126 at order time is now recorded in the state file, so
+the symbol costs exactly one signal ever, rather than one signal per crossover
+for as long as the bot runs.
+
+## An account emptied from outside is not a trading loss
+
+Nine hours later, at 08:59:28 UTC, 70.9304 USDT left the account as a
+TRANSFER_OUT. Ten seconds after that the bot halted:
+
+    Risk stop triggered  Equity $0.00 at or below floor $20.00. Halting permanently.
+
+and at the next rollover it closed the day at −$70.92. Both readings describe an
+account traded to zero. The bot had never placed an order that filled: zero
+trades, zero positions, zero realised P&L.
+
+The bot books every fill it makes, so the arithmetic to tell the two apart was
+already on hand — day-start equity, plus realised P&L, plus what the open
+positions are worth, against actual equity. What the gap does not explain did
+not come from trading. It is now reported that way, with a tolerance of the
+larger of $1 and 2% of the day's opening balance so that unbooked fees and
+funding are not announced as a mystery.
+
+This matters beyond the wording. A halt that blames the bot for money that was
+moved is also a halt that would say nothing useful if the money had been stolen.

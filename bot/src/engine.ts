@@ -1,4 +1,4 @@
-import { BybitRest } from './bybit/rest.js';
+import { BybitRest, SymbolNotPermittedError } from './bybit/rest.js';
 import { OkxMarketData } from './data/okx.js';
 import type { MarketData } from './data/types.js';
 import { KlineStream } from './bybit/stream.js';
@@ -219,12 +219,47 @@ export class Engine {
     const day = tradingDayKey(Date.now(), this.cfg.dayResetHourUtc);
     if (day === this.state.day) return;
     const previousPnl = this.equity - this.state.dayStartEquity;
-    log.info('Trading day rolled over', { from: this.state.day, to: day, pnl: usd(previousPnl) });
+    const external = await this.unaccountedEquityChange();
+    log.info('Trading day rolled over', {
+      from: this.state.day,
+      to: day,
+      pnl: usd(previousPnl),
+      ...(external === 0 ? {} : { notFromTrading: usd(external) }),
+    });
     await this.notifier.send(
       `📅 Day closed ${this.state.day}\nP&L: ${usd(previousPnl)}\nTrades: ${this.state.tradesToday}\n` +
+      (external === 0 ? '' : `Of which not from trading: ${usd(external)}\n`) +
       `New equity: ${usd(this.equity)}`,
     );
     this.state = rollDay(this.state, day, this.equity);
+  }
+
+  /**
+   * The part of the day's equity change the bot's own trading does not explain,
+   * rounded to zero when it is small enough to be fees, funding or noise.
+   *
+   * The bot books every fill it makes, so equity should be the day's opening
+   * balance plus what it has realised plus what its open positions are worth.
+   * A gap is money that moved for another reason: a transfer, a withdrawal, a
+   * trade placed by hand in the app.
+   *
+   * Worth the arithmetic because of how the alternative reads. The first time
+   * the equity floor tripped on this account it reported "Equity $0.00 hit the
+   * floor" and closed the day at "-$70.92" - which is exactly how a blown
+   * account looks and exactly what had not happened: the bot had never placed a
+   * single order, and the balance had been transferred out ten seconds earlier.
+   * Telling someone they lost money they actually moved is bad enough on its
+   * own; it would also bury a real theft in a message that blames the bot.
+   */
+  private async unaccountedEquityChange(): Promise<number> {
+    const unrealised = (await this.broker.positions().catch(() => []))
+      .reduce((sum, p) => sum + p.unrealisedPnl, 0);
+    const explained = this.state.dayStartEquity + this.state.dayRealisedPnl + unrealised;
+    const gap = this.equity - explained;
+    // Under this, the gap is bookkeeping rather than a movement: funding paid
+    // between polls, or a fee the closed-P&L ledger has not booked yet.
+    const tolerance = Math.max(1, Math.abs(this.state.dayStartEquity) * 0.02);
+    return Math.abs(gap) < tolerance ? 0 : gap;
   }
 
   /** Applies the daily loss stop, profit target and equity floor. */
@@ -266,8 +301,13 @@ export class Engine {
 
     const firstTrip = !this.state.dailyStopHit && !this.state.killSwitch;
     if (this.equity <= this.cfg.equityFloorUsd && !this.state.killSwitch) {
+      const external = await this.unaccountedEquityChange();
       this.state.killSwitch = true;
-      this.state.killSwitchReason = `Equity ${usd(this.equity)} hit the floor.`;
+      this.state.killSwitchReason = external < 0
+        ? `Equity ${usd(this.equity)} hit the floor, but ${usd(-external)} of that left the ` +
+          'account by a route this bot did not take - a transfer, a withdrawal or a manual ' +
+          'trade, not a loss it made. Check the account before clearing this.'
+        : `Equity ${usd(this.equity)} hit the floor.`;
     }
     this.state.dailyStopHit = true;
 
@@ -364,6 +404,13 @@ export class Engine {
   }
 
   private async considerEntry(symbol: string): Promise<void> {
+    // A symbol the exchange has already refused stays refused until someone
+    // signs for it on the website, so there is nothing to evaluate here.
+    if (this.state.blockedSymbols[symbol]) {
+      log.debug('Entry skipped, contract not permitted on this account', { symbol });
+      return;
+    }
+
     // Never act on a stale book. If the feed stalled, the newest "closed" bar
     // can be hours old and the strategy would be reading history as if it were
     // now. Allow two intervals of slack for a late close.
@@ -461,7 +508,28 @@ export class Engine {
       reason: signal.reason,
     });
 
-    const opened = await this.broker.open({ symbol, side: signal.side, qty, stopLoss, takeProfit });
+    let opened: boolean;
+    try {
+      opened = await this.broker.open({ symbol, side: signal.side, qty, stopLoss, takeProfit });
+    } catch (err) {
+      if (!(err instanceof SymbolNotPermittedError)) throw err;
+      // Learned the hard way, once. Bybit gates tokenized equities and some
+      // other classes behind an agreement signed on the website and only says
+      // so at order time — this is a genuine signal thrown away, and the point
+      // of recording it is that it is the last one this symbol throws away.
+      this.state.blockedSymbols[symbol] = Date.now();
+      this.store.save(this.state);
+      log.warn('Contract not permitted on this account, dropping the symbol', {
+        symbol,
+        error: err.message,
+        remedy: 'Sign the contract agreement on bybit.com, or remove the symbol from SYMBOLS.',
+      });
+      await this.notifier.send(
+        `⚠️ ${symbol} cannot be traded by this account — Bybit requires a signed agreement ` +
+        'for this contract. The signal was lost and the symbol is now being skipped.',
+      );
+      return;
+    }
     if (!opened) {
       // A post-only entry that never filled is a missed trade, not an open one.
       log.info('Entry did not fill, no position recorded', { symbol, side: signal.side });
@@ -507,6 +575,7 @@ export class Engine {
       tradesToday: this.state.tradesToday,
       dailyStopHit: this.state.dailyStopHit,
       killSwitch: this.state.killSwitch,
+      blockedSymbols: Object.keys(this.state.blockedSymbols),
       lastBarAt: this.lastBarAt ? new Date(this.lastBarAt).toISOString() : null,
       uptimeSeconds: Math.round((Date.now() - this.startedAt) / 1000),
     };

@@ -21,6 +21,18 @@ export interface Instrument {
   /** Bybit's minimum order value in USDT (5 for most linear perps). */
   minNotionalValue: number;
   maxLeverage: number;
+  /**
+   * Bybit's class for the contract: '' for a plain crypto perpetual, otherwise
+   * 'stock', 'commodity' or 'innovation'.
+   *
+   * It matters because a non-empty class can be gated behind a one-off
+   * agreement the account holder signs on the website, and an account that has
+   * not signed it is refused at order time with 110126 — long after the signal
+   * that produced the order is gone.
+   */
+  symbolType: string;
+  /** Human name of the underlying, e.g. 'NVIDIA'. Empty for crypto. */
+  fullName: string;
 }
 
 export interface Ticker {

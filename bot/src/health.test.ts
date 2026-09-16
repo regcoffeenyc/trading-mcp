@@ -20,7 +20,7 @@ function snapshotOf(over: Partial<HealthSnapshot> = {}): HealthSnapshot {
     status: 'ok', mode: 'live', network: 'mainnet', strategy: 'trend',
     equity: 70.9, dayStartEquity: 70.9, dailyPnl: 0, openPositions: 0,
     warmedUp: true, bars: { BTCUSDT: 300, ETHUSDT: 300 }, barsRequired: 210,
-    tradesToday: 0, dailyStopHit: false, killSwitch: false,
+    tradesToday: 0, dailyStopHit: false, killSwitch: false, blockedSymbols: [],
     lastBarAt: null, uptimeSeconds: 5,
     ...over,
   };
@@ -102,6 +102,22 @@ test('the full map is available when asked for', async () => {
   await withServer(() => snapshotOf(), async (get) => {
     const body = JSON.parse((await get('/health?verbose=1')).body);
     assert.deepEqual(body.bars, { BTCUSDT: 300, ETHUSDT: 300 });
+  });
+});
+
+test('a contract the account may not trade is named, not buried', async () => {
+  // The symbol will never trade again until someone signs for it on the
+  // website, so it belongs in the summary rather than behind ?verbose=1.
+  await withServer(() => snapshotOf({ blockedSymbols: ['NVDAUSDT'] }), async (get) => {
+    const body = JSON.parse((await get('/health')).body);
+    assert.deepEqual(body.blockedSymbols, ['NVDAUSDT']);
+  });
+});
+
+test('nothing blocked means no key at all', async () => {
+  await withServer(() => snapshotOf(), async (get) => {
+    const body = JSON.parse((await get('/health')).body);
+    assert.equal('blockedSymbols' in body, false, 'an always-empty key is noise');
   });
 });
 

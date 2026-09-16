@@ -1,9 +1,24 @@
+import fs from 'node:fs';
 import { BybitRest } from './bybit/rest.js';
 import { loadEnvFile } from './env.js';
 import { loadConfig, riskWarnings } from './config.js';
 import { configureLogger } from './logger.js';
 import { RiskManager } from './risk.js';
 import { usd } from './util.js';
+
+/**
+ * Symbols a previous run watched the exchange refuse with 110126, so the report
+ * can say which of the gated contracts is known-blocked rather than only which
+ * ones might be. Missing or unreadable state simply means nothing is known yet.
+ */
+function loadBlockedSymbols(file: string): Set<string> {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { blockedSymbols?: Record<string, number> };
+    return new Set(Object.keys(parsed.blockedSymbols ?? {}));
+  } catch {
+    return new Set();
+  }
+}
 
 /**
  * Pre-flight check. Verifies connectivity, credentials, symbol tradability and
@@ -71,9 +86,14 @@ async function main(): Promise<void> {
     if (cfg.apiKey) equity = (await rest.walletBalance()).equity || cfg.startingEquity;
   } catch { /* fall back to the configured starting equity */ }
 
+  // Contract classes Bybit gates behind an agreement, collected as the symbols
+  // are checked and reported once at the end.
+  const gated: Array<{ symbol: string; type: string; name: string }> = [];
+
   for (const symbol of cfg.symbols) {
     await check(`Symbol ${symbol}`, async () => {
       const inst = await rest.instrument(symbol);
+      if (inst.symbolType) gated.push({ symbol, type: inst.symbolType, name: inst.fullName });
       const ticker = await rest.ticker(symbol);
       const candles = await rest.klines(symbol, cfg.interval, 5);
       if (candles.length === 0) throw new Error('no candle data');
@@ -87,8 +107,9 @@ async function main(): Promise<void> {
       const sizingNote = sizing.ok
         ? `tradable: qty ${sizing.qty.toFixed(6)}, notional ${usd(sizing.notional)}, risk ${usd(sizing.riskUsd)}`
         : `NOT TRADABLE at this account size — ${sizing.reason}`;
+      const classNote = inst.symbolType ? ` | ${inst.symbolType} contract, agreement may be required` : '';
       return `price ${ticker.lastPrice}, spread ${ticker.spreadPct.toFixed(3)}%, ` +
-        `min notional ${usd(inst.minNotionalValue)}, max lev ${inst.maxLeverage}x | ${sizingNote}`;
+        `min notional ${usd(inst.minNotionalValue)}, max lev ${inst.maxLeverage}x | ${sizingNote}${classNote}`;
     });
   }
 
@@ -96,6 +117,37 @@ async function main(): Promise<void> {
   console.log('='.repeat(72));
   for (const [name, ok, detail] of results) {
     console.log(`${ok ? 'PASS' : 'FAIL'}  ${name.padEnd(22)} ${detail}`);
+  }
+
+  if (gated.length > 0) {
+    // The gap this closes: on 2026-09-15 the first live signal this bot ever
+    // produced was a short on NVDAUSDT, and Bybit refused the order with 110126
+    // - "you must sign the required agreement before trading this contract".
+    // Pre-flight had reported NVDAUSDT as PASS, because price, candles and
+    // sizing were all fine; nothing asked whether the account was allowed to
+    // trade it. There is no way to confirm the permission short of sending a
+    // fillable order - price and quantity are validated before the agreement is
+    // - so the honest report is the class, and which member of it has already
+    // been refused.
+    const blocked = loadBlockedSymbols(cfg.stateFile);
+    console.log('\nContracts that may need an agreement');
+    console.log('='.repeat(72));
+    console.log('  Bybit gates some contract classes behind a one-off agreement signed at');
+    console.log('  bybit.com. The order is refused with 110126 at entry time, so a signal is');
+    console.log('  already lost by the time it shows up. Sign for them, or drop them from SYMBOLS.');
+    console.log('');
+    const byType = new Map<string, Array<{ symbol: string; name: string }>>();
+    for (const g of gated) {
+      if (!byType.has(g.type)) byType.set(g.type, []);
+      byType.get(g.type)!.push({ symbol: g.symbol, name: g.name });
+    }
+    for (const [type, members] of [...byType].sort()) {
+      console.log(`  ${type} (${members.length})`);
+      for (const m of members) {
+        const mark = blocked.has(m.symbol) ? '  REFUSED 110126 on this account' : '';
+        console.log(`    ${m.symbol.padEnd(16)}${m.name}${mark}`);
+      }
+    }
   }
 
   const warnings = riskWarnings(cfg);

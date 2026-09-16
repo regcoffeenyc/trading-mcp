@@ -18,6 +18,8 @@ export interface HealthSnapshot {
   tradesToday: number;
   dailyStopHit: boolean;
   killSwitch: boolean;
+  /** Symbols the exchange has refused to let this account trade (110126). */
+  blockedSymbols: string[];
   lastBarAt: string | null;
   uptimeSeconds: number;
 }
@@ -35,12 +37,17 @@ const REQUEST_TIMEOUT_MS = 10_000;
 function summarise(data: HealthSnapshot, verbose: boolean): Record<string, unknown> {
   const entries = Object.entries(data.bars);
   const cold = entries.filter(([, n]) => n < data.barsRequired);
-  const { bars, ...rest } = data;
+  const { bars, blockedSymbols, ...rest } = data;
   return {
     ...rest,
     symbols: entries.length,
     symbolsWarm: entries.length - cold.length,
     ...(cold.length > 0 ? { notWarm: Object.fromEntries(cold) } : {}),
+    // Carried only when there is something to say. The normal case is none, and
+    // a key that is always present and always empty is one more line nobody
+    // reads; when it is not empty it names symbols that will never trade again
+    // until someone acts, which is worth interrupting the summary for.
+    ...(blockedSymbols.length > 0 ? { blockedSymbols } : {}),
     ...(verbose ? { bars } : {}),
   };
 }

@@ -85,6 +85,8 @@ const BYBIT_LINEAR_DEFAULTS: Omit<Instrument, 'symbol'> = {
   maxOrderQty: '1000000',
   minNotionalValue: 5,
   maxLeverage: 25,
+  symbolType: '',
+  fullName: '',
 };
 
 export async function runBacktest(

@@ -17,6 +17,8 @@ const INSTRUMENT: Instrument = {
   maxOrderQty: '100',
   minNotionalValue: 5,
   maxLeverage: 25,
+  symbolType: '',
+  fullName: '',
 };
 
 function baseConfig(overrides: Partial<Config> = {}): Config {

@@ -25,8 +25,14 @@ const API_SECRET = 'e2e-secret';
  * placement, trade management, closure reconciliation and state persistence
  * together — the path an actual trade takes.
  */
-async function runReplay(overrides: Record<string, string>, bars: number) {
+async function runReplay(
+  overrides: Record<string, string>,
+  bars: number,
+  prepare?: (exchange: ReplayExchange) => void,
+  during?: (exchange: ReplayExchange, bar: number) => void,
+) {
   const exchange = new ReplayExchange(CANDLES, SYMBOL, { apiKey: API_KEY, apiSecret: API_SECRET });
+  prepare?.(exchange);
   const host = await exchange.listen();
   const stateFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bot-e2e-')), 'state.json');
 
@@ -52,6 +58,7 @@ async function runReplay(overrides: Record<string, string>, bars: number) {
   await engine.start();
 
   for (let n = 0; n < bars && exchange.cursor < CANDLES.length - 1; n++, exchange.cursor++) {
+    during?.(exchange, n);
     exchange.step();
     const window = CANDLES.slice(Math.max(0, exchange.cursor - 700), exchange.cursor + 1)
       .map((c, i, a) => ({ ...c, closed: i < a.length - 1 }));
@@ -150,4 +157,41 @@ test('a paper run keeps its equity curve across a restart', async () => {
   broker.restoreEquity(0);
   broker.restoreEquity(Number.NaN);
   assert.equal((await broker.balance()).equity, 42.6, 'invalid restores are ignored');
+});
+
+test('a contract the account may not trade costs one signal, not every signal', async () => {
+  // The incident this is here for: on 2026-09-15 the bot's first live signal was
+  // a short on NVDAUSDT, and Bybit refused it with 110126 — an agreement the
+  // account had never signed. The rejection was logged as an ordinary skipped
+  // entry, so nothing was learned from it and every future signal on that symbol
+  // would have been thrown away the same way.
+  const { exchange, state } = await runReplay({}, 700, (ex) => { ex.refuseEntriesWith = 110126; });
+
+  const entries = exchange.orders.filter((o) => !o.reduceOnly);
+  assert.equal(entries.length, 1, 'the block is learned from the first refusal, not re-learned');
+  assert.deepEqual(Object.keys(state.blockedSymbols), [SYMBOL], 'and it survives into the state file');
+  assert.equal(Object.keys(state.positions).length, 0, 'a refused order is never recorded as a position');
+  assert.equal(state.totalTrades, 0);
+});
+
+test('an account emptied from outside is not reported as a trading loss', async () => {
+  // What this stops the bot saying. On 2026-09-15 the balance was transferred
+  // out of the account at 08:59:28; ten seconds later the bot halted with
+  // "Equity $0.00 hit the floor" and later closed the day at "-$70.92". It had
+  // never placed an order in its life. Both messages describe a blown account,
+  // which is both wrong and the kind of wrong that would hide a theft.
+  const { state } = await runReplay({}, 400, undefined, (ex, bar) => {
+    if (bar === 200) ex.equity = 0;
+  });
+
+  assert.equal(state.killSwitch, true, 'an empty account still halts');
+  assert.match(
+    state.killSwitchReason,
+    /did not take|transfer/i,
+    `the halt must say the money left by another route, got: ${state.killSwitchReason}`,
+  );
+  assert.ok(
+    state.totalPnl > -1,
+    `the bot's own trading did not lose this money (totalPnl ${state.totalPnl})`,
+  );
 });

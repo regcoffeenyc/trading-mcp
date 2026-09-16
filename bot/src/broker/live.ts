@@ -1,5 +1,6 @@
 import { log } from '../logger.js';
 import { roundToStep, sleep } from '../util.js';
+import { SymbolNotPermittedError } from '../bybit/rest.js';
 import type { BybitRest } from '../bybit/rest.js';
 import type { Candle, Instrument, Position, Side, Ticker, WalletBalance } from '../bybit/types.js';
 import type { Broker, ClosedTrade, EntryExecution, OpenRequest } from './types.js';
@@ -143,6 +144,10 @@ export class LiveBroker implements Broker {
         orderLinkId: `bot-${Date.now()}-${req.symbol}`,
       });
     } catch (err) {
+      // A contract this account may not trade is not a missed fill — the same
+      // order will be refused every time. Let it through so the engine can
+      // remember it instead of spending a signal on it again tomorrow.
+      if (err instanceof SymbolNotPermittedError) throw err;
       // 30208/110094: PostOnly would have crossed. The book moved; skip the bar.
       log.info('Post-only entry rejected, skipping', { symbol: req.symbol, price, error: String(err) });
       return false;

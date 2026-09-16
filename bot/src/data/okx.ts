@@ -116,6 +116,9 @@ const BYBIT_LINEAR_FILTERS: Omit<Instrument, 'symbol'> = {
   maxOrderQty: '1000000',
   minNotionalValue: 5,
   maxLeverage: 25,
+  // Bybit's contract class, which a proxy feed has nothing to say about.
+  symbolType: '',
+  fullName: '',
 };
 
 /** Market data from OKX, for paper trading where Bybit's REST API is blocked. */

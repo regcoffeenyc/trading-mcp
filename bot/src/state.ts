@@ -51,6 +51,17 @@ export interface BotState {
    */
   everFunded: boolean;
   positions: Record<string, ManagedPosition>;
+  /**
+   * Symbols this account is not permitted to trade, learned from the exchange
+   * refusing an order with 110126, mapped to when that was learned.
+   *
+   * Bybit gates some contract classes — tokenized equities among them — behind
+   * an agreement signed on the website, and refuses the order rather than the
+   * subscription, so the block is invisible until a signal is already gone. It
+   * is a standing property of the account, so it is remembered: the first
+   * signal on such a symbol is lost, and no later one is.
+   */
+  blockedSymbols: Record<string, number>;
   recentTrades: TradeRecord[];
   totalTrades: number;
   totalPnl: number;
@@ -78,6 +89,7 @@ export function emptyState(day: string, equity: number): BotState {
     killSwitchReason: '',
     everFunded: equity > 0,
     positions: {},
+    blockedSymbols: {},
     recentTrades: [],
     totalTrades: 0,
     totalPnl: 0,

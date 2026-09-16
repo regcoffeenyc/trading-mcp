@@ -17,6 +17,12 @@ export class ReplayExchange {
   equity = 50;
   cursor = 0;
   readonly orders: Array<Record<string, string>> = [];
+  /**
+   * Refuses every entry with this ret code, the way Bybit refuses a contract the
+   * account has not signed for. Unlike `failNextOrderWith` elsewhere it does not
+   * clear itself: the point of the block is that it is permanent.
+   */
+  refuseEntriesWith: number | null = null;
   /** Entries with the price they actually filled at, for asserting risk sizing. */
   readonly fills: Array<{ side: string; qty: number; entry: number; stop: number; takeProfit: number }> = [];
   readonly closes: Array<{ exit: number; pnl: number; reason: string }> = [];
@@ -80,9 +86,9 @@ export class ReplayExchange {
     for await (const c of req) chunks.push(c as Buffer);
     const body = Buffer.concat(chunks).toString();
     const url = new URL(req.url ?? '/', 'http://x');
-    const send = (result: unknown, retCode = 0) => {
+    const send = (result: unknown, retCode = 0, retMsg = 'OK') => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ retCode, retMsg: 'OK', result, time: Date.now() }));
+      res.end(JSON.stringify({ retCode, retMsg, result, time: Date.now() }));
     };
 
     const isPrivate = /^\/v5\/(account|position|order)/.test(url.pathname);
@@ -141,6 +147,9 @@ export class ReplayExchange {
         const o = JSON.parse(body) as Record<string, string>;
         this.orders.push(o);
         if (o.reduceOnly) { this.settle(price, 'MANUAL'); return send({ orderId: 'x', orderLinkId: '' }); }
+        if (this.refuseEntriesWith !== null) {
+          return send({}, this.refuseEntriesWith, 'You must sign the required agreement before trading this contract.');
+        }
         this.fills.push({
           side: o.side!, qty: Number(o.qty), entry: price,
           stop: Number(o.stopLoss), takeProfit: Number(o.takeProfit),

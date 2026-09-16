@@ -32,8 +32,23 @@ const BENIGN_CODES = new Set([
   110043, // leverage not modified
   34036,  // leverage not modified (UTA)
   110025, // position mode not modified
-  10001,  // param error — surfaced to caller, never retried
 ]);
+
+/**
+ * The account has not signed the agreement Bybit requires for this contract's
+ * class. It is a property of the account and the symbol, not of the moment, so
+ * the same order will be refused every time until someone signs it on the
+ * website — which is why the caller is given a distinguishable error to
+ * remember rather than a string to re-discover on every signal.
+ */
+export const AGREEMENT_REQUIRED = 110126;
+
+export class SymbolNotPermittedError extends Error {
+  constructor(readonly symbol: string, message: string) {
+    super(message);
+    this.name = 'SymbolNotPermittedError';
+  }
+}
 
 export interface RestOptions {
   network: Network;
@@ -142,6 +157,9 @@ export class BybitRest implements MarketData {
             throw new RetryableError(msg);
           }
           if (json.retCode === 10006 || json.retCode === 10016) throw new RetryableError(msg);
+          if (json.retCode === AGREEMENT_REQUIRED) {
+            throw new SymbolNotPermittedError(String(params.symbol ?? ''), msg);
+          }
           throw new Error(msg);
         }
         return json.result;
@@ -246,6 +264,8 @@ export class BybitRest implements MarketData {
       maxOrderQty: raw.lotSizeFilter.maxOrderQty,
       minNotionalValue: Number(raw.lotSizeFilter.minNotionalValue ?? 5),
       maxLeverage: Number(raw.leverageFilter.maxLeverage),
+      symbolType: String(raw.symbolType ?? ''),
+      fullName: String(raw.fullName ?? ''),
     };
   }
 

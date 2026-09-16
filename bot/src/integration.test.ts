@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { BybitRest } from './bybit/rest.js';
+import { BybitRest, SymbolNotPermittedError } from './bybit/rest.js';
 import { LiveBroker } from './broker/live.js';
 import type { EntryExecution } from './broker/types.js';
 
@@ -268,6 +268,39 @@ test('a partially filled entry is kept rather than discarded', async () => {
     symbol: 'BTCUSDT', side: 'Buy', qty: '0.010', stopLoss: '98.00', takeProfit: '104.00',
   });
   assert.equal(opened, true, 'a partial fill is a real position and must be tracked');
+});
+
+test('a contract the account may not trade is raised, not swallowed as a miss', async () => {
+  // 110126 is not a missed fill. A post-only order that does not fill is worth
+  // skipping the bar for; a contract this account has never signed for will be
+  // refused identically on every future signal, so it has to reach the engine
+  // as something it can remember rather than as `false`.
+  mock.positions = [];
+  mock.orders.length = 0;
+  mock.failNextOrderWith = 110126;
+
+  const broker = new LiveBroker(rest, LIMIT_ENTRY);
+  await assert.rejects(
+    () => broker.open({ symbol: 'NVDAUSDT', side: 'Sell', qty: '0.35', stopLoss: '218.29', takeProfit: '200.22' }),
+    (err: unknown) => err instanceof SymbolNotPermittedError && err.symbol === 'NVDAUSDT',
+  );
+  assert.equal(mock.positions.length, 0);
+});
+
+test('the contract class comes back with the instrument', async () => {
+  // The only thing available before an order is sent that says a symbol might
+  // be gated. Price and quantity are validated ahead of the agreement, so no
+  // probe short of a fillable order can ask the question directly.
+  mock.symbolType = 'stock';
+  mock.fullName = 'NVIDIA';
+  try {
+    const inst = await rest.instrument('NVDAUSDT');
+    assert.equal(inst.symbolType, 'stock');
+    assert.equal(inst.fullName, 'NVIDIA');
+  } finally {
+    mock.symbolType = '';
+    mock.fullName = '';
+  }
 });
 
 test('a rejected post-only order is a skipped signal, not an error', async () => {
