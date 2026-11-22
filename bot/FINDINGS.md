@@ -624,3 +624,50 @@ funding are not announced as a mystery.
 
 This matters beyond the wording. A halt that blames the bot for money that was
 moved is also a halt that would say nothing useful if the money had been stolen.
+
+## The bot died on waking, not on sleeping (2026-11-22)
+
+The host slept at 13:40 and the bot survived it: `position/list` exhausted its
+retries, `Risk tick failed` was logged, and the tick loop carried on as designed.
+It died on the way back. At 18:18 the watchdog noticed the gap correctly
+(`silentMs 16629260`, which is the 4.6 hours of sleep to the second) and forced a
+reconnect, but Wi-Fi was not up yet: `market/time` and `market/kline` each burned
+their four attempts, and at 18:20:07 the log stops with no error and no shutdown
+line. Equity was untouched and no bar was missed — the only close in the window
+was 12:00, which ran before the sleep — but the bot was gone for five hours and
+nothing would have brought it back.
+
+Reading the code afterwards found two defects on that path and one wrong
+assumption.
+
+**`seed()` abandoned every remaining symbol on the first failure.** It looped
+over all 88 symbols with a bare `await rest.klines(...)`, so one transient
+rejection threw out of the loop. On a re-seed that is worse than it looks: the
+whole point of the re-seed is to emit bars that closed while the socket was down,
+so a single failed symbol silently discarded the catch-up for all the symbols
+after it. Each symbol now has its own try/catch; failures are counted and named,
+and a first seed that reaches nothing still throws, because an empty buffer and a
+market with no signal are indistinguishable from the outside.
+
+**The reconnect chain could end permanently.** `scheduleReconnect` called
+`connect()` inside an async `setTimeout` callback with nothing around it.
+`new WebSocket()` throws synchronously while DNS is still down, which is exactly
+the state a laptop is in for the first seconds after waking. No socket means no
+`close` event, so nothing scheduled another attempt: the process would sit alive
+with a dead feed, trading nothing. A failed attempt now schedules the next one,
+with the backoff already capped at 30s, so it retries for as long as the process
+lives.
+
+**The stale lock never needed clearing by hand.** `InstanceLock.tryAcquire`
+already takes over a lock whose PID is dead. Deleting `bot.lock` after a crash
+was superstition on my part, twice. It matters now because supervision depends on
+it: a restart after a kill must not need a human.
+
+Neither fix would have saved this run, because nothing proves the process threw
+at all — there is no exception in the log, and a SIGKILL on a sleeping host
+leaves no trace either way. That is the real lesson: **the bot had no
+supervision.** `nohup` does not restart anything. `deploy/macos/install.sh` now
+installs it as a launchd agent with `KeepAlive`, so any exit for any reason is
+followed by a restart, and `RunAtLoad` means a reboot needs no human. A laptop is
+still the wrong host for a process that must be awake at 00:00 and 12:00 UTC;
+supervision narrows the window, it does not close it.

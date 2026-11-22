@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent for the Bybit bot.
+
+  Why this exists: the bot was started with nohup, which gives it no supervision
+  at all. A laptop that sleeps, a Wi-Fi drop long enough to exhaust a retry, or
+  macOS reclaiming memory on wake all end the process, and nothing brings it
+  back — the bot is simply gone until someone notices, which took five hours the
+  first time and nineteen days the time before that.
+
+  KeepAlive restarts it whenever it exits, for any reason, including a kill that
+  leaves no log line. RunAtLoad starts it at login so a reboot needs no human.
+  The single-instance lock takes over a dead owner's PID file by itself, so a
+  restart after a crash needs no cleanup.
+
+  ThrottleInterval caps the restart rate at one per 30s: a bot that cannot start
+  (bad credentials, say) then retries quietly instead of spinning.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.trading-mcp.bot</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__CAFFEINATE__</string>
+    <string>-s</string>
+    <string>__NODE__</string>
+    <string>--env-file=.env</string>
+    <string>dist/index.js</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__BOTDIR__</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>StandardOutPath</key>
+  <string>__BOTDIR__/data/stdout.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>__BOTDIR__/data/stdout.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

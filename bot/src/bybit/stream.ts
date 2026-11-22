@@ -112,25 +112,50 @@ export class KlineStream extends EventEmitter {
    * would ever be told it closed, and the signal on it would be lost in silence.
    */
   async seed(): Promise<void> {
+    const failed: string[] = [];
     for (const symbol of this.opts.symbols) {
-      const previousClose = this.newestClosedTime(symbol);
-      const candles = await this.opts.rest.klines(symbol, this.opts.interval, this.opts.historyBars);
-      this.buffers.set(symbol, candles);
-      log.debug('Seeded candles', { symbol, bars: candles.length });
-      if (!this.seeded) continue;
-      const missed = candles.filter((c) => c.closed && c.time > previousClose);
-      const newest = missed[missed.length - 1];
-      if (newest) {
-        // Only the newest is announced: a listener reads the whole buffer, so
-        // replaying each intermediate bar would evaluate the same history over
-        // and over — a week of downtime would fire hundreds of identical passes.
-        log.info('Recovered bars missed while disconnected', {
-          symbol,
-          bars: missed.length,
-          newestBar: new Date(newest.time).toISOString(),
-        });
-        this.emitBar(symbol, newest);
+      try {
+        const previousClose = this.newestClosedTime(symbol);
+        const candles = await this.opts.rest.klines(symbol, this.opts.interval, this.opts.historyBars);
+        this.buffers.set(symbol, candles);
+        log.debug('Seeded candles', { symbol, bars: candles.length });
+        if (!this.seeded) continue;
+        const missed = candles.filter((c) => c.closed && c.time > previousClose);
+        const newest = missed[missed.length - 1];
+        if (newest) {
+          // Only the newest is announced: a listener reads the whole buffer, so
+          // replaying each intermediate bar would evaluate the same history over
+          // and over — a week of downtime would fire hundreds of identical passes.
+          log.info('Recovered bars missed while disconnected', {
+            symbol,
+            bars: missed.length,
+            newestBar: new Date(newest.time).toISOString(),
+          });
+          this.emitBar(symbol, newest);
+        }
+      } catch (err) {
+        // One symbol's transient failure must not abandon the rest. Each symbol
+        // owns its buffer, so continuing costs nothing — whereas throwing here
+        // skipped every later symbol's catch-up, and a bar that closed while the
+        // socket was down would then never be emitted to anyone.
+        failed.push(symbol);
+        log.warn('Seed failed for symbol', { symbol, error: err instanceof Error ? err.message : String(err) });
       }
+    }
+
+    if (failed.length > 0) {
+      log.warn('Seed incomplete', {
+        failed: failed.length,
+        of: this.opts.symbols.length,
+        symbols: failed.slice(0, 10).join(','),
+      });
+    }
+
+    // A first seed that reached nothing must still fail loudly: with no history
+    // the strategy cannot act, and an empty buffer is indistinguishable from a
+    // market that simply produced no signal.
+    if (!this.seeded && failed.length === this.opts.symbols.length && failed.length > 0) {
+      throw new Error(`Seed failed for all ${failed.length} symbols`);
     }
     this.seeded = true;
   }
@@ -226,12 +251,37 @@ export class KlineStream extends EventEmitter {
     this.reconnectAttempts += 1;
     const delay = Math.min(30_000, 1000 * 2 ** Math.min(this.reconnectAttempts, 5));
     log.warn('Market data stream closed, reconnecting', { attempt: this.reconnectAttempts, delayMs: delay });
-    setTimeout(async () => {
-      if (this.stopped) return;
-      // Re-seed so any bars missed while disconnected are filled from REST.
-      await this.seed().catch((err) => log.error('Re-seed failed', { error: String(err) }));
+    setTimeout(() => void this.reconnect(), delay);
+  }
+
+  /**
+   * One reconnect attempt, which must never reject into the timer that called it.
+   *
+   * `connect()` constructs a WebSocket, and that throws synchronously while DNS
+   * is still down — exactly the state a laptop is in for the first seconds after
+   * it wakes. An escaped throw used to end the chain permanently: no socket means
+   * no `close` event, so nothing scheduled another attempt and the process sat
+   * alive with a dead feed, trading nothing, until someone noticed. Any failure
+   * here schedules the next attempt instead, with the backoff already capped at
+   * 30s, so the stream retries for as long as the process lives.
+   */
+  private async reconnect(): Promise<void> {
+    if (this.stopped) return;
+    // Re-seed so any bars missed while disconnected are filled from REST.
+    try {
+      await this.seed();
+    } catch (err) {
+      log.error('Re-seed failed', { error: err instanceof Error ? err.message : String(err) });
+    }
+    if (this.stopped) return;
+    try {
       this.connect();
-    }, delay);
+    } catch (err) {
+      log.warn('Reconnect attempt failed, retrying', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      this.scheduleReconnect();
+    }
   }
 
   private checkStale(): void {

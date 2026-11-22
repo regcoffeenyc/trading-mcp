@@ -107,3 +107,79 @@ test('the same close is never delivered twice', async () => {
 
   assert.equal(bars.length, 1, 'the 2h close is announced once');
 });
+
+/**
+ * Serves candles per symbol and fails for the symbols named in `broken`.
+ * Mirrors the real failure: one symbol's REST call rejects while the rest work.
+ */
+class PartlyBrokenMarket implements MarketData {
+  readonly venue = 'bybit' as const;
+  calls: string[] = [];
+  constructor(public series: Candle[], public broken: Set<string>) {}
+  instrument(): Promise<Instrument> { throw new Error('not used'); }
+  ticker(): Promise<Ticker> { throw new Error('not used'); }
+  async klines(symbol: string): Promise<Candle[]> {
+    this.calls.push(symbol);
+    if (this.broken.has(symbol)) throw new Error('fetch failed');
+    return this.series.map((c) => ({ ...c }));
+  }
+}
+
+function streamOverSymbols(market: MarketData, symbols: string[]): KlineStream {
+  return new KlineStream({
+    network: 'mainnet', symbols, interval: '60', rest: market,
+    mode: 'poll', pollMs: 60 * HOUR,
+  });
+}
+
+test('one symbol failing to seed does not abandon the others', async () => {
+  const market = new PartlyBrokenMarket(
+    [candle(1 * HOUR, true), candle(2 * HOUR, false)],
+    new Set(['AAAUSDT']),
+  );
+  const stream = streamOverSymbols(market, ['AAAUSDT', 'BBBUSDT', 'CCCUSDT']);
+  await stream.start();
+
+  // Every symbol was attempted, not just the ones before the failure.
+  assert.deepEqual(market.calls, ['AAAUSDT', 'BBBUSDT', 'CCCUSDT']);
+  assert.equal(stream.closedCandles('BBBUSDT').length, 1, 'a healthy symbol still seeded');
+  assert.equal(stream.closedCandles('CCCUSDT').length, 1, 'the symbol after the failure seeded too');
+  stream.stop();
+});
+
+test('a bar missed during an outage is still announced for symbols that re-seed cleanly', async () => {
+  const market = new PartlyBrokenMarket([candle(1 * HOUR, true)], new Set());
+  const stream = streamOverSymbols(market, ['AAAUSDT', 'BBBUSDT']);
+  await stream.start();
+
+  // Now the first symbol breaks and a new bar closes for the others.
+  market.broken = new Set(['AAAUSDT']);
+  market.series = [candle(1 * HOUR, true), candle(2 * HOUR, true)];
+  const bars: string[] = [];
+  stream.on('bar', (s: string, c: Candle) => bars.push(`${s}@${c.time}`));
+  await stream.seed();
+
+  assert.deepEqual(bars, [`BBBUSDT@${2 * HOUR}`], 'the healthy symbol recovered its missed close');
+  stream.stop();
+});
+
+test('a first seed that reaches nothing fails loudly instead of looking like no signal', async () => {
+  const market = new PartlyBrokenMarket([candle(1 * HOUR, true)], new Set(['AAAUSDT', 'BBBUSDT']));
+  const stream = streamOverSymbols(market, ['AAAUSDT', 'BBBUSDT']);
+  await assert.rejects(() => stream.start(), /Seed failed for all 2 symbols/);
+  stream.stop();
+});
+
+test('a re-seed that reaches nothing keeps the existing history and does not throw', async () => {
+  const market = new PartlyBrokenMarket([candle(1 * HOUR, true)], new Set());
+  const stream = streamOverSymbols(market, ['AAAUSDT']);
+  await stream.start();
+  assert.equal(stream.closedCandles('AAAUSDT').length, 1);
+
+  // A total outage mid-life must not throw into the reconnect chain, and must
+  // not discard the history the strategy is still entitled to act on.
+  market.broken = new Set(['AAAUSDT']);
+  await stream.seed();
+  assert.equal(stream.closedCandles('AAAUSDT').length, 1, 'history survived the failed re-seed');
+  stream.stop();
+});
