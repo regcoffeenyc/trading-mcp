@@ -140,8 +140,10 @@ test('one symbol failing to seed does not abandon the others', async () => {
   const stream = streamOverSymbols(market, ['AAAUSDT', 'BBBUSDT', 'CCCUSDT']);
   await stream.start();
 
-  // Every symbol was attempted, not just the ones before the failure.
-  assert.deepEqual(market.calls, ['AAAUSDT', 'BBBUSDT', 'CCCUSDT']);
+  // Every symbol was attempted, not just the ones before the failure. The
+  // broken one appears more than once because failures get retry passes.
+  assert.deepEqual([...new Set(market.calls)], ['AAAUSDT', 'BBBUSDT', 'CCCUSDT']);
+  assert.ok(market.calls.filter((s) => s === 'AAAUSDT').length > 1, 'the failure was retried');
   assert.equal(stream.closedCandles('BBBUSDT').length, 1, 'a healthy symbol still seeded');
   assert.equal(stream.closedCandles('CCCUSDT').length, 1, 'the symbol after the failure seeded too');
   stream.stop();
@@ -181,5 +183,41 @@ test('a re-seed that reaches nothing keeps the existing history and does not thr
   market.broken = new Set(['AAAUSDT']);
   await stream.seed();
   assert.equal(stream.closedCandles('AAAUSDT').length, 1, 'history survived the failed re-seed');
+  stream.stop();
+});
+
+/** Fails a symbol the first N times it is asked for, then succeeds. */
+class FlakyMarket implements MarketData {
+  readonly venue = 'bybit' as const;
+  attempts = new Map<string, number>();
+  constructor(public series: Candle[], public failTimes: Map<string, number>) {}
+  instrument(): Promise<Instrument> { throw new Error('not used'); }
+  ticker(): Promise<Ticker> { throw new Error('not used'); }
+  async klines(symbol: string): Promise<Candle[]> {
+    const n = (this.attempts.get(symbol) ?? 0) + 1;
+    this.attempts.set(symbol, n);
+    if (n <= (this.failTimes.get(symbol) ?? 0)) throw new Error('This operation was aborted');
+    return this.series.map((c) => ({ ...c }));
+  }
+}
+
+test('a symbol that times out once is retried rather than left unscanned', async () => {
+  const market = new FlakyMarket([candle(1 * HOUR, true)], new Map([['AAAUSDT', 1]]));
+  const stream = streamOverSymbols(market, ['AAAUSDT', 'BBBUSDT']);
+  await stream.start();
+
+  assert.equal(market.attempts.get('AAAUSDT'), 2, 'the flaky symbol was tried again');
+  assert.equal(market.attempts.get('BBBUSDT'), 1, 'a healthy symbol was not re-fetched');
+  assert.equal(stream.closedCandles('AAAUSDT').length, 1, 'it ended up seeded');
+  stream.stop();
+});
+
+test('a symbol failing every pass is given up on without taking the others down', async () => {
+  const market = new FlakyMarket([candle(1 * HOUR, true)], new Map([['AAAUSDT', 99]]));
+  const stream = streamOverSymbols(market, ['AAAUSDT', 'BBBUSDT']);
+  await stream.start();
+
+  assert.equal(market.attempts.get('AAAUSDT'), 3, 'tried for every pass, then abandoned');
+  assert.equal(stream.closedCandles('BBBUSDT').length, 1, 'the healthy symbol is unaffected');
   stream.stop();
 });

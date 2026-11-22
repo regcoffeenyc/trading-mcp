@@ -3,6 +3,7 @@ import { log } from '../logger.js';
 import type { Network } from './rest.js';
 import type { MarketData } from '../data/types.js';
 import type { Candle } from './types.js';
+import { sleep } from '../util.js';
 
 const WS_HOSTS: Record<Network, string> = {
   mainnet: 'wss://stream.bybit.com/v5/public/linear',
@@ -14,6 +15,13 @@ const WS_HOSTS: Record<Network, string> = {
 const PING_INTERVAL_MS = 20_000;
 const STALE_AFTER_MS = 90_000;
 const MAX_BUFFER = 1000;
+/**
+ * A symbol whose seed times out is retried rather than left out. Skipping it
+ * silently means the strategy never scans it until the socket happens to drop,
+ * which on a healthy feed can be days.
+ */
+const SEED_PASSES = 3;
+const SEED_RETRY_MS = 2_000;
 
 export interface KlineStreamOptions {
   network: Network;
@@ -112,41 +120,38 @@ export class KlineStream extends EventEmitter {
    * would ever be told it closed, and the signal on it would be lost in silence.
    */
   async seed(): Promise<void> {
-    const failed: string[] = [];
-    for (const symbol of this.opts.symbols) {
-      try {
-        const previousClose = this.newestClosedTime(symbol);
-        const candles = await this.opts.rest.klines(symbol, this.opts.interval, this.opts.historyBars);
-        this.buffers.set(symbol, candles);
-        log.debug('Seeded candles', { symbol, bars: candles.length });
-        if (!this.seeded) continue;
-        const missed = candles.filter((c) => c.closed && c.time > previousClose);
-        const newest = missed[missed.length - 1];
-        if (newest) {
-          // Only the newest is announced: a listener reads the whole buffer, so
-          // replaying each intermediate bar would evaluate the same history over
-          // and over — a week of downtime would fire hundreds of identical passes.
-          log.info('Recovered bars missed while disconnected', {
+    let pending = [...this.opts.symbols];
+    let failed: string[] = [];
+
+    for (let pass = 1; pass <= SEED_PASSES; pass++) {
+      const stillFailing: string[] = [];
+      for (const symbol of pending) {
+        try {
+          await this.seedSymbol(symbol);
+        } catch (err) {
+          // One symbol's transient failure must not abandon the rest. Each symbol
+          // owns its buffer, so continuing costs nothing — whereas throwing here
+          // skipped every later symbol's catch-up, and a bar that closed while the
+          // socket was down would then never be emitted to anyone.
+          stillFailing.push(symbol);
+          log.warn('Seed failed for symbol', {
             symbol,
-            bars: missed.length,
-            newestBar: new Date(newest.time).toISOString(),
+            pass,
+            error: err instanceof Error ? err.message : String(err),
           });
-          this.emitBar(symbol, newest);
         }
-      } catch (err) {
-        // One symbol's transient failure must not abandon the rest. Each symbol
-        // owns its buffer, so continuing costs nothing — whereas throwing here
-        // skipped every later symbol's catch-up, and a bar that closed while the
-        // socket was down would then never be emitted to anyone.
-        failed.push(symbol);
-        log.warn('Seed failed for symbol', { symbol, error: err instanceof Error ? err.message : String(err) });
       }
+      failed = stillFailing;
+      if (failed.length === 0) break;
+      pending = failed;
+      if (pass < SEED_PASSES) await sleep(SEED_RETRY_MS);
     }
 
     if (failed.length > 0) {
       log.warn('Seed incomplete', {
         failed: failed.length,
         of: this.opts.symbols.length,
+        passes: SEED_PASSES,
         symbols: failed.slice(0, 10).join(','),
       });
     }
@@ -158,6 +163,28 @@ export class KlineStream extends EventEmitter {
       throw new Error(`Seed failed for all ${failed.length} symbols`);
     }
     this.seeded = true;
+  }
+
+  /** Seeds one symbol's buffer, announcing a close it missed while disconnected. */
+  private async seedSymbol(symbol: string): Promise<void> {
+    const previousClose = this.newestClosedTime(symbol);
+    const candles = await this.opts.rest.klines(symbol, this.opts.interval, this.opts.historyBars);
+    this.buffers.set(symbol, candles);
+    log.debug('Seeded candles', { symbol, bars: candles.length });
+    if (!this.seeded) return;
+    const missed = candles.filter((c) => c.closed && c.time > previousClose);
+    const newest = missed[missed.length - 1];
+    if (newest) {
+      // Only the newest is announced: a listener reads the whole buffer, so
+      // replaying each intermediate bar would evaluate the same history over
+      // and over — a week of downtime would fire hundreds of identical passes.
+      log.info('Recovered bars missed while disconnected', {
+        symbol,
+        bars: missed.length,
+        newestBar: new Date(newest.time).toISOString(),
+      });
+      this.emitBar(symbol, newest);
+    }
   }
 
   private newestClosedTime(symbol: string): number {
